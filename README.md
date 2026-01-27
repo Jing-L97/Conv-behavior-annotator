@@ -1,2 +1,9 @@
-# Conv-behavior-annotator
-automatic annotation tools on conversation behavior
+# Automatic conversation behaviro annotator
+
+## Setup
+
+To install the required packages, run:
+
+    pip install -r requirements.txt
+
+
