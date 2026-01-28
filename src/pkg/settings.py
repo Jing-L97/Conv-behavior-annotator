@@ -3,33 +3,6 @@ import os as _os
 import warnings as _warnings
 from pathlib import Path as _Path
 
-import torch
-
-#######################################################
-# precision setting
-dtype_dict = {
-    torch.float32: [
-        "EleutherAI/pythia-70m-deduped",
-        "EleutherAI/pythia-160m-deduped",
-        "EleutherAI/pythia-410m-deduped",
-    ],
-    torch.float16: [
-        "EleutherAI/pythia-6.9B-deduped",
-        "EleutherAI/pythia-2.8B-deduped",
-        "EleutherAI/pythia-1.4B-deduped",
-        "EleutherAI/pythia-1B-deduped",
-    ],
-}
-
-
-def get_dtype(model_name=None, dtype_dict=dtype_dict, default=torch.float32):
-    """Get precision (dtype) for a given model name using a reverse search."""
-    for dtype, model_list in dtype_dict.items():
-        if model_name in model_list:
-            return dtype
-    return default
-
-
 #######################################################
 # directory setting
 
@@ -89,42 +62,6 @@ class _MyPathSettings:
     @property
     def result_dir(self) -> _Path:
         return self.DATA_DIR / "results"
-
-    @property
-    def unigram_dir(self) -> _Path:
-        return self.DATA_DIR / "datasets" / "src" / "unigram"
-
-    @property
-    def context_dir(self) -> _Path:
-        return self.DATA_DIR / "datasets" / "context"
-
-    @property
-    def surprisal_dir(self) -> _Path:
-        return self.DATA_DIR / "results" / "surprisal"
-
-    @property
-    def ablation_dir(self) -> _Path:
-        return self.DATA_DIR / "results" / "ablations"
-
-    @property
-    def attention_dir(self) -> _Path:
-        return self.DATA_DIR / "results" / "attention"
-
-    @property
-    def neuron_dir(self) -> _Path:
-        return self.DATA_DIR / "results" / "selection"
-
-    @property
-    def direction_dir(self) -> _Path:
-        return self.DATA_DIR / "results" / "geometry"
-
-    @property
-    def classify_dir(self) -> _Path:
-        return self.DATA_DIR / "results" / "classify"
-
-    @property
-    def freq_dir(self) -> _Path:
-        return self.DATA_DIR / "results" / "freq"
 
 
 #######################################################
