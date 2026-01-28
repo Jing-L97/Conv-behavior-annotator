@@ -3,6 +3,24 @@ import os as _os
 import warnings as _warnings
 from pathlib import Path as _Path
 
+import torch
+
+#######################################################
+# device setting
+
+
+def get_torch_device():
+    """Auto-detect CUDA, Apple MPS, or CPU."""
+    if torch.cuda.is_available():
+        print("✓ Using CUDA GPU")
+        return "cuda"
+    if torch.backends.mps.is_available():
+        print("✓ Using Apple MPS GPU")
+        return "mps"
+    print("✓ Using CPU")
+    return "cpu"
+
+
 #######################################################
 # directory setting
 

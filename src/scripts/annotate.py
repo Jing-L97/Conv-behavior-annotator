@@ -5,15 +5,16 @@ import os
 import sys
 import warnings
 
-import numpy as np
 import pandas as pd
-from tqdm import tqdm
-from transformers import pipeline
 
 warnings.filterwarnings("ignore")
-
-# Import the alignment calculators (assuming they're in a separate file)
 from pkg.annotator.alignment import LinguisticAlignmentSuite
+from pkg.annotator.emotion import SentimentAnnotator
+from pkg.settings import get_torch_device
+
+##############################
+# Argument Parsing
+##############################
 
 
 def parse_args(argv):
@@ -62,110 +63,18 @@ def parse_args(argv):
     return parser.parse_args(argv)
 
 
-class SentimentAnnotator:
-    """Annotates adult turns with emotion-based sentiment scores.
-    Optimized for child-adult educational interactions.
-    """
-
-    def __init__(self, model_name: str = "SamLowe/roberta-base-go_emotions"):
-        """Initialize sentiment annotator.
-
-        Args:
-            model_name: HuggingFace model for emotion classification
-
-        """
-        print(f"Loading emotion model: {model_name}...")
-        self.emotion_classifier = pipeline(
-            "text-classification",
-            model=model_name,
-            top_k=None,
-            device=-1,  # Use CPU; set to 0 for GPU
-        )
-
-        # Define emotion categories for child-adult interactions
-        self.supportive_emotions = ["admiration", "approval", "caring", "optimism", "pride"]
-        self.engagement_emotions = ["curiosity", "excitement", "amusement", "desire"]
-        self.warmth_emotions = ["caring", "love", "gratitude", "joy"]
-        self.negative_emotions = ["disappointment", "disapproval", "annoyance", "anger"]
-
-    def _compute_composite_scores(self, emotion_dict: dict[str, float]) -> dict[str, float]:
-        """Compute composite sentiment scores from emotion distribution."""
-        supportiveness = np.mean([emotion_dict.get(e, 0) for e in self.supportive_emotions])
-
-        engagement = np.mean([emotion_dict.get(e, 0) for e in self.engagement_emotions])
-
-        warmth = np.mean([emotion_dict.get(e, 0) for e in self.warmth_emotions])
-
-        negativity = np.mean([emotion_dict.get(e, 0) for e in self.negative_emotions])
-
-        # Overall pedagogical positivity
-        pedagogical_positivity = np.mean([supportiveness, engagement, warmth, 1 - negativity])
-
-        return {
-            "supportiveness": float(supportiveness),
-            "engagement": float(engagement),
-            "warmth": float(warmth),
-            "negativity": float(negativity),
-            "pedagogical_positivity": float(pedagogical_positivity),
-            "approval": float(emotion_dict.get("approval", 0)),
-            "curiosity": float(emotion_dict.get("curiosity", 0)),
-            "caring": float(emotion_dict.get("caring", 0)),
-        }
-
-    def annotate_batch(self, texts: list[str]) -> pd.DataFrame:
-        """Annotate a batch of texts with sentiment scores.
-
-        Args:
-            texts: List of adult utterances
-
-        Returns:
-            DataFrame with sentiment scores
-
-        """
-        results = []
-
-        # Process in batches for efficiency
-        for text in tqdm(texts, desc="Annotating sentiment"):
-            if pd.isna(text) or text.strip() == "":
-                # Handle empty/NaN texts
-                results.append(
-                    {
-                        "supportiveness": 0.0,
-                        "engagement": 0.0,
-                        "warmth": 0.0,
-                        "negativity": 0.0,
-                        "pedagogical_positivity": 0.0,
-                        "approval": 0.0,
-                        "curiosity": 0.0,
-                        "caring": 0.0,
-                    }
-                )
-            else:
-                emotions = self.emotion_classifier(text)[0]
-                emotion_dict = {e["label"]: e["score"] for e in emotions}
-                scores = self._compute_composite_scores(emotion_dict)
-                results.append(scores)
-
-        return pd.DataFrame(results)
+##############################
+# Annotate Functions
+##############################
 
 
-def annotate_sentiment(df: pd.DataFrame, adult_column: str, emotion_model: str) -> pd.DataFrame:
-    """Annotate adult turns with sentiment scores.
-
-    Args:
-        df: Input dataframe
-        adult_column: Column name containing adult utterances
-        emotion_model: HuggingFace model name
-
-    Returns:
-        DataFrame with sentiment score columns
-
-    """
+def annotate_sentiment(df: pd.DataFrame, adult_column: str, emotion_model: str, device: str | None) -> pd.DataFrame:
+    """Annotate adult turns with sentiment scores."""
     print("\n" + "=" * 70)
     print("SENTIMENT ANNOTATION")
     print("=" * 70)
 
-    annotator = SentimentAnnotator(model_name=emotion_model)
+    annotator = SentimentAnnotator(model_name=emotion_model, device=device)
 
     # Extract adult utterances
     adult_texts = df[adult_column].tolist()
@@ -186,30 +95,16 @@ def annotate_alignment(
     spacy_model: str,
     semantic_model: str,
     exclude_stopwords: bool,
-    file_column: str = None,
+    device: str | None,
 ) -> pd.DataFrame:
-    """Annotate child-adult pairs with linguistic alignment scores.
-
-    Args:
-        df: Input dataframe
-        child_column: Column name containing child utterances
-        adult_column: Column name containing adult responses
-        spacy_model: spaCy model name
-        semantic_model: SentenceTransformer model name
-        exclude_stopwords: Whether to exclude stopwords
-        file_column: Optional column for grouping conversations
-
-    Returns:
-        DataFrame with alignment score columns
-
-    """
+    """Annotate child-adult pairs with linguistic alignment scores."""
     print("\n" + "=" * 70)
     print("LINGUISTIC ALIGNMENT ANNOTATION")
     print("=" * 70)
 
     # Initialize alignment suite
     suite = LinguisticAlignmentSuite(
-        spacy_model=spacy_model, semantic_model=semantic_model, exclude_stopwords=exclude_stopwords
+        spacy_model=spacy_model, semantic_model=semantic_model, exclude_stopwords=exclude_stopwords, device=device
     )
 
     # Extract utterances
@@ -237,9 +132,15 @@ def annotate_alignment(
     return alignment_df
 
 
+##############################
+# main function
+##############################
+
+
 def main(argv):
     """Main function for sentiment and alignment annotation."""
     args = parse_args(argv)
+    device = get_torch_device()
 
     print("=" * 70)
     print("SENTIMENT & LINGUISTIC ALIGNMENT ANNOTATION")
@@ -279,7 +180,9 @@ def main(argv):
 
     # Annotate sentiment
     if args.annotate_sentiment:
-        sentiment_df = annotate_sentiment(df=df, adult_column=args.adult_column, emotion_model=args.emotion_model)
+        sentiment_df = annotate_sentiment(
+            df=df, adult_column=args.adult_column, emotion_model=args.emotion_model, device=device
+        )
         annotation_frames.append(sentiment_df)
         print("✓ Sentiment annotation complete")
         print(f"  Added columns: {sentiment_df.columns.tolist()}")
@@ -294,6 +197,7 @@ def main(argv):
             semantic_model=args.semantic_model,
             exclude_stopwords=args.exclude_stopwords,
             file_column=args.file_column,
+            device=device,
         )
         annotation_frames.append(alignment_df)
         print("✓ Alignment annotation complete")
@@ -313,10 +217,7 @@ def main(argv):
     input_filename = os.path.basename(args.input_path)
     base_name = os.path.splitext(input_filename)[0]
 
-    if args.debug:
-        output_filename = f"{base_name}_annotated_debug.csv"
-    else:
-        output_filename = f"{base_name}_annotated.csv"
+    output_filename = f"{base_name}_annotated_debug.csv" if args.debug else f"{base_name}_annotated.csv"
 
     output_path = os.path.join(args.output_dir, output_filename)
 
@@ -332,28 +233,6 @@ def main(argv):
     print(f"Output saved to: {output_path}")
     print(f"Total rows: {len(result_df)}")
     print(f"Total columns: {len(result_df.columns)}")
-
-    # Display sample results
-    print("\nSample of annotated data:")
-    display_cols = [args.child_column, args.adult_column]
-    if args.annotate_sentiment:
-        display_cols.extend(["sent_supportiveness", "sent_pedagogical_positivity"])
-    if args.annotate_alignment:
-        display_cols.extend(["align_lexical", "align_syntactic", "align_semantic"])
-
-    available_cols = [col for col in display_cols if col in result_df.columns]
-    print(result_df[available_cols].head(3).to_string())
-
-    # Summary statistics
-    if args.annotate_sentiment:
-        print("\nSentiment Score Statistics:")
-        sentiment_cols = [col for col in result_df.columns if col.startswith("sent_")]
-        print(result_df[sentiment_cols].describe())
-
-    if args.annotate_alignment:
-        print("\nAlignment Score Statistics:")
-        alignment_cols = [col for col in result_df.columns if col.startswith("align_")]
-        print(result_df[alignment_cols].describe())
 
 
 if __name__ == "__main__":

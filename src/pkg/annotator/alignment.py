@@ -5,20 +5,11 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 
 class LexicalAlignmentCalculator:
-    """Computes lexical alignment based on lemma overlap rate.
-
-    Alignment = |lemmas_child ∩ lemmas_adult| / (|lemmas_child| + |lemmas_adult|)
-    """
+    """Computes lexical alignment based on lemma overlap rate (TYPE-level)."""
 
     def __init__(
         self, model_name: str = "en_core_web_sm", exclude_stopwords: bool = True, exclude_punctuation: bool = True
     ):
-        """Args:
-        model_name: spaCy model to use
-        exclude_stopwords: Whether to exclude stopwords from alignment
-        exclude_punctuation: Whether to exclude punctuation
-
-        """
         try:
             self.nlp = spacy.load(model_name)
         except OSError:
@@ -32,7 +23,7 @@ class LexicalAlignmentCalculator:
         self.exclude_punctuation = exclude_punctuation
 
     def _get_lemmas(self, text: str) -> list[str]:
-        """Extract lemmatized tokens from text."""
+        """Extract lemmatized tokens from text (preserving duplicates for counting)."""
         doc = self.nlp(text.lower())
         lemmas = []
 
@@ -42,80 +33,67 @@ class LexicalAlignmentCalculator:
                 continue
             if self.exclude_stopwords and token.is_stop:
                 continue
+            # Skip whitespace-only tokens
+            if token.text.strip() == "":
+                continue
 
             lemmas.append(token.lemma_)
 
         return lemmas
 
     def compute_alignment(self, child_turn: str, adult_turn: str) -> float:
-        """Compute lexical alignment between child and adult turns.
-
-        Args:
-            child_turn: Child's utterance
-            adult_turn: Adult's utterance
-
-        Returns:
-            Alignment score in [0, 1]
-
-        """
+        """Compute lexical alignment between child and adult turns (TYPE-level)."""
         child_lemmas = self._get_lemmas(child_turn)
         adult_lemmas = self._get_lemmas(adult_turn)
 
+        # Convert to TYPES (unique lemmas)
+        child_types = set(child_lemmas)
+        adult_types = set(adult_lemmas)
+
         # Handle empty cases
-        if len(child_lemmas) == 0 and len(adult_lemmas) == 0:
+        if len(child_types) == 0 and len(adult_types) == 0:
             return 1.0  # Both empty = perfect alignment
-        if len(child_lemmas) == 0 or len(adult_lemmas) == 0:
+        if len(child_types) == 0 or len(adult_types) == 0:
             return 0.0  # One empty = no alignment
 
-        # Overlap rate: intersection / total
-        child_set = set(child_lemmas)
-        adult_set = set(adult_lemmas)
-
-        intersection = len(child_set & adult_set)
-        total = len(child_lemmas) + len(adult_lemmas)
+        # Overlap rate: intersection / total TYPES
+        intersection = len(child_types & adult_types)
+        total = len(adult_types)
 
         alignment = intersection / total if total > 0 else 0.0
 
         return float(alignment)
 
     def compute_alignment_detailed(self, child_turn: str, adult_turn: str) -> dict:
-        """Compute alignment with detailed breakdown.
-
-        Returns:
-            Dictionary with alignment score and shared lemmas
-
-        """
+        """Compute alignment with detailed breakdown."""
         child_lemmas = self._get_lemmas(child_turn)
         adult_lemmas = self._get_lemmas(adult_turn)
 
-        child_set = set(child_lemmas)
-        adult_set = set(adult_lemmas)
-        shared_lemmas = child_set & adult_set
+        child_types = set(child_lemmas)
+        adult_types = set(adult_lemmas)
+        shared_types = child_types & adult_types
 
         alignment = self.compute_alignment(child_turn, adult_turn)
 
         return {
             "alignment": alignment,
-            "child_lemmas": child_lemmas,
-            "adult_lemmas": adult_lemmas,
-            "shared_lemmas": list(shared_lemmas),
-            "num_child_lemmas": len(child_lemmas),
-            "num_adult_lemmas": len(adult_lemmas),
-            "num_shared": len(shared_lemmas),
+            "child_lemmas": child_lemmas,  # All tokens
+            "adult_lemmas": adult_lemmas,  # All tokens
+            "child_types": list(child_types),  # Unique lemmas
+            "adult_types": list(adult_types),  # Unique lemmas
+            "shared_types": list(shared_types),
+            "num_child_tokens": len(child_lemmas),
+            "num_adult_tokens": len(adult_lemmas),
+            "num_child_types": len(child_types),
+            "num_adult_types": len(adult_types),
+            "num_shared_types": len(shared_types),
         }
 
 
 class SyntacticAlignmentCalculator:
-    """Computes syntactic alignment based on POS tag bigram overlap rate.
+    """Computes syntactic alignment based on POS tag bigram overlap rate."""
 
-    Uses POS bigrams to capture sequential syntactic structure.
-    """
-
-    def __init__(self, model_name: str = "en_core_web_sm"):
-        """Args:
-        model_name: spaCy model to use
-
-        """
+    def __init__(self, model_name: str = "en_core_web_sm", use_types: bool = True):
         try:
             self.nlp = spacy.load(model_name)
         except OSError:
@@ -125,11 +103,20 @@ class SyntacticAlignmentCalculator:
             subprocess.run(["python", "-m", "spacy", "download", model_name], check=False)
             self.nlp = spacy.load(model_name)
 
+        self.use_types = use_types
+
     def _get_pos_tags(self, text: str) -> list[str]:
-        """Extract POS tags from text."""
+        """Extract POS tags from text, excluding punctuation."""
         doc = self.nlp(text)
-        # Use universal POS tags (coarse-grained)
-        pos_tags = [token.pos_ for token in doc if not token.is_punct]
+        # Use universal POS tags (coarse-grained), exclude punctuation
+        pos_tags = []
+        for token in doc:
+            if token.is_punct:
+                continue
+            # Skip whitespace-only tokens
+            if token.text.strip() == "":
+                continue
+            pos_tags.append(token.pos_)
         return pos_tags
 
     def _get_pos_bigrams(self, text: str) -> list[str]:
@@ -144,16 +131,7 @@ class SyntacticAlignmentCalculator:
         return bigrams
 
     def compute_alignment(self, child_turn: str, adult_turn: str) -> float:
-        """Compute syntactic alignment between child and adult turns using POS bigrams.
-
-        Args:
-            child_turn: Child's utterance
-            adult_turn: Adult's utterance
-
-        Returns:
-            Alignment score in [0, 1]
-
-        """
+        """Compute syntactic alignment between child and adult turns using POS bigrams."""
         child_bigrams = self._get_pos_bigrams(child_turn)
         adult_bigrams = self._get_pos_bigrams(adult_turn)
 
@@ -163,33 +141,33 @@ class SyntacticAlignmentCalculator:
         if len(child_bigrams) == 0 or len(adult_bigrams) == 0:
             return 0.0  # One empty = no alignment
 
-        # Overlap rate: intersection / total
-        child_set = set(child_bigrams)
-        adult_set = set(adult_bigrams)
+        if self.use_types:
+            # TYPE-level: unique bigram patterns
+            child_set = set(child_bigrams)
+            adult_set = set(adult_bigrams)
 
-        intersection = len(child_set & adult_set)
-        total = len(child_bigrams) + len(adult_bigrams)
+            intersection = len(child_set & adult_set)
+            total = len(adult_set)
+        else:
+            # TOKEN-level: count all bigrams
+            intersection = len(set(child_bigrams) & set(adult_bigrams))
+            total = len(adult_bigrams)
 
         alignment = intersection / total if total > 0 else 0.0
 
         return float(alignment)
 
     def compute_alignment_detailed(self, child_turn: str, adult_turn: str) -> dict:
-        """Compute alignment with detailed breakdown.
-
-        Returns:
-            Dictionary with alignment scores and POS tag information
-
-        """
+        """Compute alignment with detailed breakdown."""
         child_tags = self._get_pos_tags(child_turn)
         adult_tags = self._get_pos_tags(adult_turn)
 
         child_bigrams = self._get_pos_bigrams(child_turn)
         adult_bigrams = self._get_pos_bigrams(adult_turn)
 
-        child_bigram_set = set(child_bigrams)
-        adult_bigram_set = set(adult_bigrams)
-        shared_bigrams = child_bigram_set & adult_bigram_set
+        child_bigram_types = set(child_bigrams)
+        adult_bigram_types = set(adult_bigrams)
+        shared_bigram_types = child_bigram_types & adult_bigram_types
 
         alignment = self.compute_alignment(child_turn, adult_turn)
 
@@ -197,32 +175,25 @@ class SyntacticAlignmentCalculator:
             "alignment": alignment,
             "child_pos_tags": child_tags,
             "adult_pos_tags": adult_tags,
-            "child_pos_bigrams": child_bigrams,
-            "adult_pos_bigrams": adult_bigrams,
-            "shared_bigrams": list(shared_bigrams),
+            "child_pos_bigrams": child_bigrams,  # All tokens
+            "adult_pos_bigrams": adult_bigrams,  # All tokens
+            "child_bigram_types": list(child_bigram_types),  # Unique
+            "adult_bigram_types": list(adult_bigram_types),  # Unique
+            "shared_bigram_types": list(shared_bigram_types),
             "num_child_bigrams": len(child_bigrams),
             "num_adult_bigrams": len(adult_bigrams),
-            "num_shared_bigrams": len(shared_bigrams),
+            "num_child_bigram_types": len(child_bigram_types),
+            "num_adult_bigram_types": len(adult_bigram_types),
+            "num_shared_bigram_types": len(shared_bigram_types),
         }
 
 
 class SemanticAlignmentCalculator:
-    """Computes semantic alignment using sentence embeddings.
+    """Computes semantic alignment using sentence embeddings."""
 
-    Alignment = cosine_similarity(embedding_child, embedding_adult)
-    """
-
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        """Args:
-        model_name: SentenceTransformer model to use
-                   Options:
-                   - "all-MiniLM-L6-v2" (fast, 384 dim)
-                   - "all-mpnet-base-v2" (better quality, 768 dim)
-                   - "paraphrase-MiniLM-L6-v2" (paraphrase detection)
-
-        """
-        print(f"Loading semantic model: {model_name}...")
-        self.model = SentenceTransformer(model_name)
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", device: str | None = None):
+        print(f"Loading semantic model: {model_name} on {device}...")
+        self.model = SentenceTransformer(model_name, device=device)
         self.model_name = model_name
 
     def _get_embedding(self, text: str) -> np.ndarray:
@@ -231,21 +202,7 @@ class SemanticAlignmentCalculator:
         return embedding
 
     def compute_alignment(self, child_turn: str, adult_turn: str) -> float:
-        """Compute semantic alignment between child and adult turns.
-
-        Args:
-            child_turn: Child's utterance
-            adult_turn: Adult's utterance
-
-        Returns:
-            Alignment score in [0, 1]
-
-        Note:
-            Cosine similarity ranges from [-1, 1], but in practice
-            sentence embeddings rarely give negative values.
-            We clip to [0, 1] for consistency.
-
-        """
+        """Compute semantic alignment between child and adult turns."""
         # Handle empty inputs
         if not child_turn.strip() or not adult_turn.strip():
             return 0.0
@@ -263,16 +220,7 @@ class SemanticAlignmentCalculator:
         return float(alignment)
 
     def compute_alignment_batch(self, child_turns: list[str], adult_turns: list[str]) -> np.ndarray:
-        """Compute semantic alignment for multiple turn pairs efficiently.
-
-        Args:
-            child_turns: List of child utterances
-            adult_turns: List of adult utterances
-
-        Returns:
-            Array of alignment scores
-
-        """
+        """Compute semantic alignment for multiple turn pairs efficiently."""
         if len(child_turns) != len(adult_turns):
             raise ValueError("Number of child and adult turns must match")
 
@@ -289,12 +237,7 @@ class SemanticAlignmentCalculator:
         return np.array(alignments)
 
     def compute_alignment_detailed(self, child_turn: str, adult_turn: str) -> dict:
-        """Compute alignment with embedding details.
-
-        Returns:
-            Dictionary with alignment score and embeddings
-
-        """
+        """Compute alignment with embedding details."""
         child_emb = self._get_embedding(child_turn)
         adult_emb = self._get_embedding(adult_turn)
 
@@ -317,36 +260,21 @@ class LinguisticAlignmentSuite:
         spacy_model: str = "en_core_web_sm",
         semantic_model: str = "all-MiniLM-L6-v2",
         exclude_stopwords: bool = True,
+        device: str | None = None,
     ):
-        """Initialize all alignment calculators.
-
-        Args:
-            spacy_model: Model for lexical and syntactic alignment
-            semantic_model: Model for semantic alignment
-            exclude_stopwords: Whether to exclude stopwords in lexical alignment
-
-        """
+        """Initialize all alignment calculators."""
         print("Initializing Linguistic Alignment Suite...")
 
         self.lexical_calc = LexicalAlignmentCalculator(model_name=spacy_model, exclude_stopwords=exclude_stopwords)
 
         self.syntactic_calc = SyntacticAlignmentCalculator(model_name=spacy_model)
 
-        self.semantic_calc = SemanticAlignmentCalculator(model_name=semantic_model)
+        self.semantic_calc = SemanticAlignmentCalculator(model_name=semantic_model, device=device)
 
         print("✓ Alignment suite ready!")
 
     def compute_all_alignments(self, child_turn: str, adult_turn: str) -> dict[str, float]:
-        """Compute all three alignment types.
-
-        Args:
-            child_turn: Child's utterance
-            adult_turn: Adult's utterance
-
-        Returns:
-            Dictionary with all alignment scores (all in [0, 1])
-
-        """
+        """Compute all three alignment types."""
         return {
             "lexical_alignment": self.lexical_calc.compute_alignment(child_turn, adult_turn),
             "syntactic_alignment": self.syntactic_calc.compute_alignment(child_turn, adult_turn),
@@ -354,12 +282,7 @@ class LinguisticAlignmentSuite:
         }
 
     def compute_all_alignments_detailed(self, child_turn: str, adult_turn: str) -> dict:
-        """Compute all alignments with detailed breakdowns.
-
-        Returns:
-            Dictionary with detailed information for each alignment type
-
-        """
+        """Compute all alignments with detailed breakdowns."""
         return {
             "lexical": self.lexical_calc.compute_alignment_detailed(child_turn, adult_turn),
             "syntactic": self.syntactic_calc.compute_alignment_detailed(child_turn, adult_turn),
@@ -367,12 +290,7 @@ class LinguisticAlignmentSuite:
         }
 
     def compute_batch(self, child_turns: list[str], adult_turns: list[str]) -> dict[str, np.ndarray]:
-        """Efficiently compute alignments for multiple turn pairs.
-
-        Returns:
-            Dictionary of arrays with alignment scores
-
-        """
+        """Efficiently compute alignments for multiple turn pairs."""
         n = len(child_turns)
         if n != len(adult_turns):
             raise ValueError("Number of child and adult turns must match")
