@@ -3,13 +3,14 @@
 import argparse
 import sys
 import warnings
+from pathlib import Path
 
 import pandas as pd
 
 warnings.filterwarnings("ignore")
 from pkg import settings
 from pkg.annotator.alignment import LinguisticAlignmentSuite
-from pkg.annotator.emotion import SentimentAnnotator
+from pkg.annotator.sentiment import SentimentAnnotator
 from pkg.settings import get_torch_device
 
 ##############################
@@ -54,9 +55,11 @@ def parse_args(argv):
         help="SentenceTransformer model for semantic alignment",
     )
     parser.add_argument("--exclude_stopwords", action="store_true", help="Exclude stopwords in lexical alignment")
-
+    parser.add_argument(
+        "--exclude_interjections", action="store_true", help="Exclude interjections in lexical alignment"
+    )
     # Processing settings
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for processing")
+    parser.add_argument("--batch_size", type=int, default=128, help="Batch size for processing")
     parser.add_argument("--debug", action="store_true", help="Debug mode: process only first 100 rows")
 
     return parser.parse_args(argv)
@@ -67,7 +70,9 @@ def parse_args(argv):
 ##############################
 
 
-def annotate_sentiment(df: pd.DataFrame, adult_column: str, emotion_model: str, device: str | None) -> pd.DataFrame:
+def annotate_sentiment(
+    df: pd.DataFrame, adult_column: str, emotion_model: str, device: str | None, batch_size: int
+) -> pd.DataFrame:
     """Annotate adult turns with sentiment scores."""
     print("\n" + "=" * 70)
     print("SENTIMENT ANNOTATION")
@@ -79,7 +84,7 @@ def annotate_sentiment(df: pd.DataFrame, adult_column: str, emotion_model: str, 
     adult_texts = df[adult_column].tolist()
 
     # Annotate
-    sentiment_scores = annotator.annotate_batch(adult_texts)
+    sentiment_scores = annotator.annotate_batch(adult_texts, batch_size)
 
     # Add prefix to column names
     sentiment_scores.columns = ["sent_" + col for col in sentiment_scores.columns]
@@ -94,6 +99,7 @@ def annotate_alignment(
     spacy_model: str,
     semantic_model: str,
     exclude_stopwords: bool,
+    exclude_interjections: bool,
     device: str | None,
 ) -> pd.DataFrame:
     """Annotate child-adult pairs with linguistic alignment scores."""
@@ -103,7 +109,11 @@ def annotate_alignment(
 
     # Initialize alignment suite
     suite = LinguisticAlignmentSuite(
-        spacy_model=spacy_model, semantic_model=semantic_model, exclude_stopwords=exclude_stopwords, device=device
+        spacy_model=spacy_model,
+        semantic_model=semantic_model,
+        exclude_stopwords=exclude_stopwords,
+        exclude_interjections=exclude_interjections,
+        device=device,
     )
 
     # Extract utterances
@@ -134,8 +144,6 @@ def annotate_alignment(
 ##############################
 # main function
 ##############################
-
-from pathlib import Path
 
 
 def main(argv):
@@ -197,6 +205,7 @@ def main(argv):
             adult_column=args.adult_column,
             emotion_model=args.emotion_model,
             device=device,
+            batch_size=args.batch_size,  # optional
         )
         annotation_frames.append(sentiment_df)
         print("✓ Sentiment annotation complete")
@@ -210,6 +219,7 @@ def main(argv):
             spacy_model=args.spacy_model,
             semantic_model=args.semantic_model,
             exclude_stopwords=args.exclude_stopwords,
+            exclude_interjections=args.exclude_interjections,
             device=device,
         )
         annotation_frames.append(alignment_df)
@@ -228,7 +238,12 @@ def main(argv):
     # ------------------------------------------------------------------
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_path: Path = output_dir / f"{input_path.stem}.csv"
+    suffix = ""
+    if args.exclude_stopwords:
+        suffix += "_no_stopwords"
+    if args.exclude_interjections:
+        suffix += "_no_intjs"
+    output_path: Path = output_dir / f"{input_path.stem}{suffix}.csv"
 
     if output_path.suffix == ".csv":
         result_df.to_csv(output_path, index=False)
