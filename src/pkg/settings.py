@@ -54,7 +54,7 @@ class _MyPathSettings:
 
     def __post_init__(self) -> None:
         if "DATA_DIR" not in _os.environ:
-            self.DATA_DIR = _Path("/scratch2/jliu/Generative_replay/neuron")
+            self.DATA_DIR = _Path("/scratch2/jliu/Feedback")
 
         if not self.DATA_DIR.is_dir():
             _warnings.warn(
@@ -71,7 +71,7 @@ class _MyPathSettings:
 
     @property
     def script_dir(self) -> _Path:
-        return self.DATA_DIR / "target_neuron_ablation"
+        return self.DATA_DIR / "Conv-behavior-annotator"
 
     @property
     def model_dir(self) -> _Path:

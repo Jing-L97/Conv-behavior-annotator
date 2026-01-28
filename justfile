@@ -2,7 +2,7 @@ jupyter_port := "9998"
 compute_node := "puck1"
 current_dir := justfile_directory()
 COML_CLUSTER := "oberon2"
-scratch2_deploy_folder := "/scratch2/jliu/Generative_replay/neuron/target_neuron_ablation"
+scratch2_deploy_folder := "/scratch2/jliu/Feedback/Conv-behavior-annotator"
 
 hostname := `hostname`
 COML_WORKSPACE := if hostname == "MacBook-Pro-de-jliu" {

@@ -1,13 +1,13 @@
 """Sentiment and Linguistic Alignment Annotation for Child-Adult Interactions."""
 
 import argparse
-import os
 import sys
 import warnings
 
 import pandas as pd
 
 warnings.filterwarnings("ignore")
+from pkg import settings
 from pkg.annotator.alignment import LinguisticAlignmentSuite
 from pkg.annotator.emotion import SentimentAnnotator
 from pkg.settings import get_torch_device
@@ -22,16 +22,15 @@ def parse_args(argv):
         description="Annotate sentiment and linguistic alignment for child-adult interactions"
     )
 
-    parser.add_argument("--input_path", type=str, required=True, help="Path to input CSV/Excel file")
-    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save annotated results")
+    parser.add_argument(
+        "--input_path", type=str, default="raw/conversations_min_age_10.csv", help="Path to input CSV/Excel file"
+    )
+    parser.add_argument("--output_dir", type=str, default="annotated/", help="Directory to save annotated results")
     parser.add_argument(
         "--child_column", type=str, default="utt_transcript_clean", help="Column name for child utterances"
     )
     parser.add_argument(
         "--adult_column", type=str, default="response_transcript_clean", help="Column name for adult responses"
-    )
-    parser.add_argument(
-        "--file_column", type=str, default="transcript_file", help="Column name for grouping conversations"
     )
 
     # Sentiment analysis settings
@@ -136,58 +135,73 @@ def annotate_alignment(
 # main function
 ##############################
 
+from pathlib import Path
+
 
 def main(argv):
     """Main function for sentiment and alignment annotation."""
     args = parse_args(argv)
     device = get_torch_device()
 
+    input_path: Path = settings.PATH.dataset_root / args.input_path
+    output_dir: Path = settings.PATH.dataset_root / args.output_dir
+
     print("=" * 70)
     print("SENTIMENT & LINGUISTIC ALIGNMENT ANNOTATION")
     print("=" * 70)
-    print(f"Input file: {args.input_path}")
-    print(f"Output directory: {args.output_dir}")
+    print(f"Input file: {input_path}")
+    print(f"Output directory: {output_dir}")
     print(f"Annotate sentiment: {args.annotate_sentiment}")
     print(f"Annotate alignment: {args.annotate_alignment}")
 
+    # ------------------------------------------------------------------
     # Load data
+    # ------------------------------------------------------------------
     print("\nLoading data...")
-    if args.input_path.endswith(".csv"):
-        df = pd.read_csv(args.input_path)
-    elif args.input_path.endswith(".xlsx"):
-        df = pd.read_excel(args.input_path)
+
+    if input_path.suffix == ".csv":
+        df = pd.read_csv(input_path)
+    elif input_path.suffix in {".xlsx", ".xls"}:
+        df = pd.read_excel(input_path)
     else:
         raise ValueError("Input file must be CSV or Excel format")
 
     print(f"Loaded {len(df)} rows")
     print(f"Columns: {df.columns.tolist()}")
 
+    # ------------------------------------------------------------------
     # Debug mode
+    # ------------------------------------------------------------------
     if args.debug:
         print("\n" + "!" * 70)
         print("DEBUG MODE: Processing only first 100 rows")
         print("!" * 70)
         df = df.head(100)
 
-    # Verify required columns exist
+    # ------------------------------------------------------------------
+    # Verify required columns
+    # ------------------------------------------------------------------
     required_cols = [args.child_column, args.adult_column]
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         raise ValueError(f"Missing required columns: {missing_cols}")
 
-    # Initialize results list
+    # ------------------------------------------------------------------
+    # Annotation
+    # ------------------------------------------------------------------
     annotation_frames = [df.copy()]
 
-    # Annotate sentiment
     if args.annotate_sentiment:
         sentiment_df = annotate_sentiment(
-            df=df, adult_column=args.adult_column, emotion_model=args.emotion_model, device=device
+            df=df,
+            adult_column=args.adult_column,
+            emotion_model=args.emotion_model,
+            device=device,
         )
         annotation_frames.append(sentiment_df)
         print("✓ Sentiment annotation complete")
         print(f"  Added columns: {sentiment_df.columns.tolist()}")
 
-    # Annotate linguistic alignment
     if args.annotate_alignment:
         alignment_df = annotate_alignment(
             df=df,
@@ -196,35 +210,29 @@ def main(argv):
             spacy_model=args.spacy_model,
             semantic_model=args.semantic_model,
             exclude_stopwords=args.exclude_stopwords,
-            file_column=args.file_column,
             device=device,
         )
         annotation_frames.append(alignment_df)
         print("✓ Alignment annotation complete")
         print(f"  Added columns: {alignment_df.columns.tolist()}")
 
-    # Combine all annotations
+    # ------------------------------------------------------------------
+    # Combine results
+    # ------------------------------------------------------------------
     print("\nCombining annotations...")
     result_df = pd.concat(annotation_frames, axis=1)
-
-    # Remove duplicate columns (if any)
     result_df = result_df.loc[:, ~result_df.columns.duplicated()]
 
-    # Save results
-    os.makedirs(args.output_dir, exist_ok=True)
+    # ------------------------------------------------------------------
+    # Save output
+    # ------------------------------------------------------------------
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate output filename
-    input_filename = os.path.basename(args.input_path)
-    base_name = os.path.splitext(input_filename)[0]
+    output_path: Path = output_dir / f"{input_path.stem}.csv"
 
-    output_filename = f"{base_name}_annotated_debug.csv" if args.debug else f"{base_name}_annotated.csv"
-
-    output_path = os.path.join(args.output_dir, output_filename)
-
-    # Save
-    if output_path.endswith(".csv"):
+    if output_path.suffix == ".csv":
         result_df.to_csv(output_path, index=False)
-    elif output_path.endswith(".xlsx"):
+    elif output_path.suffix in {".xlsx", ".xls"}:
         result_df.to_excel(output_path, index=False)
 
     print("\n" + "=" * 70)
