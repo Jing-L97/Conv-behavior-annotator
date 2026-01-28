@@ -2,6 +2,7 @@
 #SBATCH --job-name=annotate_all
 #SBATCH --export=ALL
 #SBATCH --partition=gpu-p1
+#SBATCH --gres=gpu:1
 #SBATCH --mem=120G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=24:00:00
