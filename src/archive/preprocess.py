@@ -1,6 +1,6 @@
 import pandas as pd
 
-from .annotator.backchannel import BackchannelIdentifier
+from .backchannel import BackchannelIdentifier
 
 
 class ConversationMergeStrategy:
