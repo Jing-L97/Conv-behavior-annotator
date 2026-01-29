@@ -34,7 +34,6 @@ class SentimentAnnotator:
             "approval": float(emotion_dict.get("approval", 0)),
             "curiosity": float(emotion_dict.get("curiosity", 0)),
             "caring": float(emotion_dict.get("caring", 0)),
-            "pedagogical_positivity": 0.0,  # keep the original column
         }
 
     def annotate_batch(self, texts: list[str], batch_size: int = 32) -> pd.DataFrame:
