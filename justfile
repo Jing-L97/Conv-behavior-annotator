@@ -3,6 +3,9 @@ compute_node := "puck1"
 current_dir := justfile_directory()
 COML_CLUSTER := "oberon2"
 scratch2_deploy_folder := "/scratch2/jliu/Feedback/Conv-behavior-annotator"
+JZ_CLUSTER := "jean-zay"
+JZ_deploy_folder := "/lustre/fswork/projects/rech/eqb/commun/Feedback/Conv-behavior-annotator"
+
 
 hostname := `hostname`
 COML_WORKSPACE := if hostname == "MacBook-Pro-de-jliu" {
@@ -32,6 +35,11 @@ fetch-notebooks:
 deploy-coml: exec-permissions
     echo "Syncing source-code directory..."
     rsync -azP --delete --exclude=".venv" --exclude=".mypy_cache" --exclude="notebooks" --exclude=".ruff_cache" --exclude="src/*.egg-info" "{{current_dir}}/" "{{COML_CLUSTER}}:{{scratch2_deploy_folder}}"
+
+deploy-jz: exec-permissions
+    echo "Syncing source-code directory..."
+    rsync -azP --delete --exclude=".venv" --exclude=".mypy_cache" --exclude="notebooks" --exclude=".ruff_cache" --exclude="src/*.egg-info" "{{current_dir}}/" "{{JZ_CLUSTER}}:{{JZ_deploy_folder}}"
+
 
 [doc("Make executables")]
 exec-permissions:

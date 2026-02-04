@@ -1,5 +1,6 @@
 import dataclasses as _dataclasses
 import os as _os
+import socket as _socket
 import warnings as _warnings
 from pathlib import Path as _Path
 
@@ -48,30 +49,33 @@ def _assert_dir(dir_location: _Path) -> None:
 
 @_dataclasses.dataclass
 class _MyPathSettings:
-    DATA_DIR: _Path = _Path(_os.environ.get("DATA_DIR", "data/"))
-    COML_SERVERS: tuple = tuple({"oberon", "oberon2", "habilis", *[f"puck{i}" for i in range(1, 7)]})
-    KNOWN_HOSTS: tuple[str, ...] = (*COML_SERVERS, "MacBook-Pro-de-jliu")
+    PROJECT_NAME: str = "Conv-behavior-annotator"
 
     def __post_init__(self) -> None:
-        if "DATA_DIR" not in _os.environ:
-            self.DATA_DIR = _Path("/scratch2/jliu/Feedback")
+        hostname = _socket.gethostname()
+
+        # 2. Only the prefix differs
+        prefix = _Path("/lustre/fswork/projects/rech/eqb/commun") if "Jean-Zay" in hostname else _Path("/scratch2/jliu")
+
+        self.DATA_DIR = (prefix / "Feedback").resolve()
 
         if not self.DATA_DIR.is_dir():
             _warnings.warn(
-                f"Provided DATA_DIR: {self.DATA_DIR} does not exist.\n"
-                "You either need to run the code in one of the predifined servers.\n"
-                "OR provide a valid DATA_DIR env variable.",
+                f"Resolved DATA_DIR does not exist: {self.DATA_DIR}",
                 stacklevel=1,
             )
 
+    # ---- Shared project layout ----
+
     @property
     def dataset_root(self) -> _Path:
-        _assert_dir(self.DATA_DIR / "datasets")
-        return self.DATA_DIR / "datasets"
+        path = self.DATA_DIR / "datasets"
+        _assert_dir(path)
+        return path
 
     @property
     def script_dir(self) -> _Path:
-        return self.DATA_DIR / "Conv-behavior-annotator"
+        return self.DATA_DIR / self.PROJECT_NAME
 
     @property
     def model_dir(self) -> _Path:
