@@ -53,10 +53,7 @@ class _MyPathSettings:
 
     def __post_init__(self) -> None:
         hostname = _socket.gethostname()
-
-        # 2. Only the prefix differs
         prefix = _Path("/lustre/fswork/projects/rech/eqb/commun") if "Jean-Zay" in hostname else _Path("/scratch2/jliu")
-
         self.DATA_DIR = (prefix / "Feedback").resolve()
 
         if not self.DATA_DIR.is_dir():
