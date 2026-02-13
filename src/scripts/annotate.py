@@ -96,11 +96,11 @@ def annotate_alignment(
     df: pd.DataFrame,
     child_column: str,
     adult_column: str,
-    spacy_model: str,
-    semantic_model: str,
-    exclude_stopwords: bool,
-    exclude_interjections: bool,
-    device: str | None,
+    spacy_model: str = "en_core_web_sm",
+    semantic_model: str = "all-MiniLM-L6-v2",
+    exclude_stopwords: bool = False,
+    exclude_interjections: bool = False,
+    device: str | None = None,
 ) -> pd.DataFrame:
     """Annotate child-adult pairs with linguistic alignment scores."""
     print("\n" + "=" * 70)
@@ -117,24 +117,21 @@ def annotate_alignment(
     )
 
     # Extract utterances
-    child_texts = df[child_column].tolist()
-    adult_texts = df[adult_column].tolist()
-
-    # Handle NaN values
-    child_texts = ["" if pd.isna(text) else text for text in child_texts]
-    adult_texts = ["" if pd.isna(text) else text for text in adult_texts]
+    child_texts = df[child_column].fillna("").tolist()
+    adult_texts = df[adult_column].fillna("").tolist()
 
     print(f"Processing {len(child_texts)} child-adult pairs...")
 
-    # Compute alignments (batch processing for semantic alignment)
+    # Compute batch alignments
     alignment_results = suite.compute_batch(child_texts, adult_texts)
 
-    # Create DataFrame
+    # Build DataFrame with separate lexical scores
     alignment_df = pd.DataFrame(
         {
-            "align_lexical": alignment_results["lexical_alignment"],
+            "align_lexical_unigram": alignment_results["lexical_unigram_alignment"],
+            "align_lexical_bigram": alignment_results["lexical_bigram_alignment"],
             "align_syntactic": alignment_results["syntactic_alignment"],
-            "align_semantic": alignment_results["semantic_alignment"],
+            # "align_semantic": alignment_results["semantic_alignment"],
         }
     )
 
@@ -243,7 +240,10 @@ def main(argv):
         suffix += "_no_stopwords"
     if args.exclude_interjections:
         suffix += "_no_intjs"
-    output_path: Path = output_dir / f"{input_path.stem}{suffix}.csv"
+
+    out_file_name = f"{input_path.stem}{suffix}_debug.csv" if args.debug else f"{input_path.stem}{suffix}.csv"
+
+    output_path: Path = output_dir / out_file_name
 
     if output_path.suffix == ".csv":
         result_df.to_csv(output_path, index=False)

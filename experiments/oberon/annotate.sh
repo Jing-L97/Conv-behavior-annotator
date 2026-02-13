@@ -13,8 +13,8 @@
 SCRIPT_ROOT="/scratch2/jliu/Feedback/Conv-behavior-annotator/src/scripts"
 
 # Run the script with the appropriate configuration
-python $SCRIPT_ROOT/annotate.py --annotate_sentiment --annotate_alignment --exclude_interjections
+# python $SCRIPT_ROOT/annotate.py --annotate_sentiment --annotate_alignment --exclude_interjections
 
-python $SCRIPT_ROOT/annotate.py --annotate_alignment --exclude_stopwords
+# python $SCRIPT_ROOT/annotate.py --annotate_alignment --exclude_stopwords
 
 python $SCRIPT_ROOT/annotate.py --annotate_alignment 

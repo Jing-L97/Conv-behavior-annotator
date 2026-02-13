@@ -10,7 +10,6 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 import wandb
-from data import compute_reward_value
 from datasets import Dataset, DatasetDict
 from sklearn.model_selection import train_test_split
 from torch import nn
@@ -27,7 +26,8 @@ from transformers.trainer_pt_utils import nested_detach
 from trl import ModelConfig, RewardConfig, RewardTrainer, get_kbit_device_map, get_peft_config, get_quantization_config
 from trl.trainer.utils import print_rich_table
 
-from pkg.utilities import CONVERSATIONS_DATA_FILE
+from pkg.rlhf.data import compute_reward_value
+from pkg.rlhf.utilities import CONVERSATIONS_DATA_FILE
 
 os.environ["WANDB_LOG_MODEL"] = "false"
 

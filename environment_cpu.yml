@@ -1,0 +1,13 @@
+name: lm_feedback
+channels:
+  - defaults
+  - pytorch
+  - conda-forge
+dependencies:
+  - cpuonly
+  - pandas
+  - python=3.10
+  - pytorch
+  - lightning
+  - transformers=4.43.3
+  - huggingface_hub=0.24

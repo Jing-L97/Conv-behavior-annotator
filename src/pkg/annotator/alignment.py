@@ -5,19 +5,18 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 
 class LexicalAlignmentCalculator:
-    """Computes lexical alignment based on lemma overlap rate (TYPE-level)."""
+    """Computes lexical alignment based on shared lemmas and bigrams."""
 
     def __init__(
         self,
         model_name: str = "en_core_web_sm",
-        exclude_stopwords: bool = True,
+        exclude_stopwords: bool = False,
         exclude_punctuation: bool = True,
         exclude_interjections: bool = False,
     ):
         try:
             self.nlp = spacy.load(model_name)
         except OSError:
-            print(f"Downloading spaCy model {model_name}...")
             import subprocess
 
             subprocess.run(["python", "-m", "spacy", "download", model_name], check=False)
@@ -25,22 +24,21 @@ class LexicalAlignmentCalculator:
 
         self.exclude_stopwords = exclude_stopwords
         self.exclude_punctuation = exclude_punctuation
-        self.exclude_interjections = exclude_interjections  # NEW
+        self.exclude_interjections = exclude_interjections
+
+    # ---------- helpers ----------
 
     def _get_lemmas(self, text: str) -> list[str]:
-        """Extract lemmatized tokens from text (preserving duplicates for counting)."""
         doc = self.nlp(text.lower())
         lemmas = []
 
         for token in doc:
-            # Filter based on settings
             if self.exclude_punctuation and token.is_punct:
                 continue
             if self.exclude_stopwords and token.is_stop:
                 continue
-            if self.exclude_interjections and token.pos_ == "INTJ":  # NEW
+            if self.exclude_interjections and token.pos_ == "INTJ":
                 continue
-            # Skip whitespace-only tokens
             if token.text.strip() == "":
                 continue
 
@@ -48,150 +46,100 @@ class LexicalAlignmentCalculator:
 
         return lemmas
 
-    def compute_alignment(self, child_turn: str, adult_turn: str) -> float:
-        """Compute lexical alignment between child and adult turns (TYPE-level)."""
-        child_lemmas = self._get_lemmas(child_turn)
-        adult_lemmas = self._get_lemmas(adult_turn)
+    def _get_bigrams(self, seq: list[str]) -> list[tuple[str, str]]:
+        return [(seq[i], seq[i + 1]) for i in range(len(seq) - 1)]
 
-        # Convert to TYPES (unique lemmas)
-        child_types = set(child_lemmas)
-        adult_types = set(adult_lemmas)
+    def _overlap_score(self, a: set, b: set) -> float:
+        if not a and not b:
+            return 1.0
+        if not a or not b:
+            return 0.0
+        return len(a & b) / max(len(a), len(b))
 
-        # Handle empty cases
-        if len(child_types) == 0 and len(adult_types) == 0:
-            return 1.0  # Both empty = perfect alignment
-        if len(child_types) == 0 or len(adult_types) == 0:
-            return 0.0  # One empty = no alignment
+    # ---------- main ----------
 
-        # Overlap rate: intersection / total TYPES
-        intersection = len(child_types & adult_types)
-        total = len(adult_types)
+    def compute_alignment(self, child_turn: str, adult_turn: str) -> dict[str, float]:
+        child = self._get_lemmas(child_turn)
+        adult = self._get_lemmas(adult_turn)
 
-        alignment = intersection / total if total > 0 else 0.0
+        child_uni = set(child)
+        adult_uni = set(adult)
 
-        return float(alignment)
-
-    def compute_alignment_detailed(self, child_turn: str, adult_turn: str) -> dict:
-        """Compute alignment with detailed breakdown."""
-        child_lemmas = self._get_lemmas(child_turn)
-        adult_lemmas = self._get_lemmas(adult_turn)
-
-        child_types = set(child_lemmas)
-        adult_types = set(adult_lemmas)
-        shared_types = child_types & adult_types
-
-        alignment = self.compute_alignment(child_turn, adult_turn)
+        child_bi = set(self._get_bigrams(child))
+        adult_bi = set(self._get_bigrams(adult))
 
         return {
-            "alignment": alignment,
-            "child_lemmas": child_lemmas,  # All tokens
-            "adult_lemmas": adult_lemmas,  # All tokens
-            "child_types": list(child_types),  # Unique lemmas
-            "adult_types": list(adult_types),  # Unique lemmas
-            "shared_types": list(shared_types),
-            "num_child_tokens": len(child_lemmas),
-            "num_adult_tokens": len(adult_lemmas),
-            "num_child_types": len(child_types),
-            "num_adult_types": len(adult_types),
-            "num_shared_types": len(shared_types),
+            "lexical_unigram_alignment": self._overlap_score(child_uni, adult_uni),
+            "lexical_bigram_alignment": self._overlap_score(child_bi, adult_bi),
+        }
+
+    def compute_alignment_detailed(self, child_turn: str, adult_turn: str) -> dict:
+        child = self._get_lemmas(child_turn)
+        adult = self._get_lemmas(adult_turn)
+
+        child_uni = set(child)
+        adult_uni = set(adult)
+        child_bi = set(self._get_bigrams(child))
+        adult_bi = set(self._get_bigrams(adult))
+
+        return {
+            "scores": self.compute_alignment(child_turn, adult_turn),
+            "child_unigrams": list(child_uni),
+            "adult_unigrams": list(adult_uni),
+            "child_bigrams": list(child_bi),
+            "adult_bigrams": list(adult_bi),
+            "shared_unigrams": list(child_uni & adult_uni),
+            "shared_bigrams": list(child_bi & adult_bi),
         }
 
 
 class SyntacticAlignmentCalculator:
-    """Computes syntactic alignment based on POS tag bigram overlap rate."""
+    """Syntactic alignment based on shared POS bigram types."""
 
-    def __init__(self, model_name: str = "en_core_web_sm", use_types: bool = True):
+    def __init__(self, model_name: str = "en_core_web_sm"):
         try:
             self.nlp = spacy.load(model_name)
         except OSError:
-            print(f"Downloading spaCy model {model_name}...")
             import subprocess
 
             subprocess.run(["python", "-m", "spacy", "download", model_name], check=False)
             self.nlp = spacy.load(model_name)
 
-        self.use_types = use_types
+    # ---------- helpers ----------
 
     def _get_pos_tags(self, text: str) -> list[str]:
-        """Extract POS tags from text, excluding punctuation."""
         doc = self.nlp(text)
-        # Use universal POS tags (coarse-grained), exclude punctuation
-        pos_tags = []
-        for token in doc:
-            if token.is_punct:
-                continue
-            # Skip whitespace-only tokens
-            if token.text.strip() == "":
-                continue
-            pos_tags.append(token.pos_)
-        return pos_tags
+        return [t.pos_ for t in doc if not t.is_punct and t.text.strip()]
 
-    def _get_pos_bigrams(self, text: str) -> list[str]:
-        """Extract POS tag bigrams to capture sequential structure."""
-        pos_tags = self._get_pos_tags(text)
+    def _get_pos_bigrams(self, pos: list[str]) -> list[tuple[str, str]]:
+        return [(pos[i], pos[i + 1]) for i in range(len(pos) - 1)]
 
-        if len(pos_tags) < 2:
-            return []
-
-        # Create bigrams: "DET_NOUN", "NOUN_VERB", etc.
-        bigrams = [f"{pos_tags[i]}_{pos_tags[i + 1]}" for i in range(len(pos_tags) - 1)]
-        return bigrams
+    # ---------- main ----------
 
     def compute_alignment(self, child_turn: str, adult_turn: str) -> float:
-        """Compute syntactic alignment between child and adult turns using POS bigrams."""
-        child_bigrams = self._get_pos_bigrams(child_turn)
-        adult_bigrams = self._get_pos_bigrams(adult_turn)
+        child = set(self._get_pos_bigrams(self._get_pos_tags(child_turn)))
+        adult = set(self._get_pos_bigrams(self._get_pos_tags(adult_turn)))
 
-        # Handle empty cases
-        if len(child_bigrams) == 0 and len(adult_bigrams) == 0:
-            return 1.0  # Both empty = perfect alignment
-        if len(child_bigrams) == 0 or len(adult_bigrams) == 0:
-            return 0.0  # One empty = no alignment
+        if not child and not adult:
+            return 1.0
+        if not child or not adult:
+            return 0.0
 
-        if self.use_types:
-            # TYPE-level: unique bigram patterns
-            child_set = set(child_bigrams)
-            adult_set = set(adult_bigrams)
+        shared = len(child & adult)
+        denom = max(len(child), len(adult))
 
-            intersection = len(child_set & adult_set)
-            total = len(adult_set)
-        else:
-            # TOKEN-level: count all bigrams
-            intersection = len(set(child_bigrams) & set(adult_bigrams))
-            total = len(adult_bigrams)
-
-        alignment = intersection / total if total > 0 else 0.0
-
-        return float(alignment)
+        return shared / denom
 
     def compute_alignment_detailed(self, child_turn: str, adult_turn: str) -> dict:
-        """Compute alignment with detailed breakdown."""
-        child_tags = self._get_pos_tags(child_turn)
-        adult_tags = self._get_pos_tags(adult_turn)
-
-        child_bigrams = self._get_pos_bigrams(child_turn)
-        adult_bigrams = self._get_pos_bigrams(adult_turn)
-
-        child_bigram_types = set(child_bigrams)
-        adult_bigram_types = set(adult_bigrams)
-        shared_bigram_types = child_bigram_types & adult_bigram_types
-
-        alignment = self.compute_alignment(child_turn, adult_turn)
+        child = set(self._get_pos_bigrams(self._get_pos_tags(child_turn)))
+        adult = set(self._get_pos_bigrams(self._get_pos_tags(adult_turn)))
+        shared = child & adult
 
         return {
-            "alignment": alignment,
-            "child_pos_tags": child_tags,
-            "adult_pos_tags": adult_tags,
-            "child_pos_bigrams": child_bigrams,  # All tokens
-            "adult_pos_bigrams": adult_bigrams,  # All tokens
-            "child_bigram_types": list(child_bigram_types),  # Unique
-            "adult_bigram_types": list(adult_bigram_types),  # Unique
-            "shared_bigram_types": list(shared_bigram_types),
-            "num_child_bigrams": len(child_bigrams),
-            "num_adult_bigrams": len(adult_bigrams),
-            "num_child_bigram_types": len(child_bigram_types),
-            "num_adult_bigram_types": len(adult_bigram_types),
-            "num_shared_bigram_types": len(shared_bigram_types),
+            "alignment": self.compute_alignment(child_turn, adult_turn),
+            "child_pos_types": list(child),
+            "adult_pos_types": list(adult),
+            "shared_pos_types": list(shared),
         }
 
 
@@ -260,65 +208,69 @@ class SemanticAlignmentCalculator:
 
 
 class LinguisticAlignmentSuite:
-    """Unified interface for computing all alignment metrics."""
+    """Unified interface for computing lexical, syntactic, and semantic alignment."""
 
     def __init__(
         self,
         spacy_model: str = "en_core_web_sm",
         semantic_model: str = "all-MiniLM-L6-v2",
-        exclude_stopwords: bool = True,
+        exclude_stopwords: bool = False,
         exclude_interjections: bool = False,
         device: str | None = None,
     ):
-        """Initialize all alignment calculators."""
         print("Initializing Linguistic Alignment Suite...")
 
         self.lexical_calc = LexicalAlignmentCalculator(
-            model_name=spacy_model, exclude_stopwords=exclude_stopwords, exclude_interjections=exclude_interjections
+            model_name=spacy_model,
+            exclude_stopwords=exclude_stopwords,
+            exclude_interjections=exclude_interjections,
         )
 
         self.syntactic_calc = SyntacticAlignmentCalculator(model_name=spacy_model)
-
         self.semantic_calc = SemanticAlignmentCalculator(model_name=semantic_model, device=device)
 
         print("✓ Alignment suite ready!")
 
+    # ---------- single pair ----------
+
     def compute_all_alignments(self, child_turn: str, adult_turn: str) -> dict[str, float]:
-        """Compute all three alignment types."""
+        lexical_scores = self.lexical_calc.compute_alignment(child_turn, adult_turn)
+
         return {
-            "lexical_alignment": self.lexical_calc.compute_alignment(child_turn, adult_turn),
+            "lexical_unigram_alignment": lexical_scores["lexical_unigram_alignment"],
+            "lexical_bigram_alignment": lexical_scores["lexical_bigram_alignment"],
             "syntactic_alignment": self.syntactic_calc.compute_alignment(child_turn, adult_turn),
-            "semantic_alignment": self.semantic_calc.compute_alignment(child_turn, adult_turn),
+            # "semantic_alignment": self.semantic_calc.compute_alignment(child_turn, adult_turn),
         }
 
     def compute_all_alignments_detailed(self, child_turn: str, adult_turn: str) -> dict:
-        """Compute all alignments with detailed breakdowns."""
         return {
             "lexical": self.lexical_calc.compute_alignment_detailed(child_turn, adult_turn),
             "syntactic": self.syntactic_calc.compute_alignment_detailed(child_turn, adult_turn),
-            "semantic": self.semantic_calc.compute_alignment_detailed(child_turn, adult_turn),
+            # "semantic": self.semantic_calc.compute_alignment_detailed(child_turn, adult_turn),
         }
 
+    # ---------- batch ----------
+
     def compute_batch(self, child_turns: list[str], adult_turns: list[str]) -> dict[str, np.ndarray]:
-        """Efficiently compute alignments for multiple turn pairs."""
-        n = len(child_turns)
-        if n != len(adult_turns):
+        if len(child_turns) != len(adult_turns):
             raise ValueError("Number of child and adult turns must match")
 
-        # Lexical and syntactic need to be computed individually
-        lexical_scores = np.array(
-            [self.lexical_calc.compute_alignment(c, a) for c, a in zip(child_turns, adult_turns, strict=False)]
-        )
+        uni_scores = []
+        bi_scores = []
+        syn_scores = []
 
-        syntactic_scores = np.array(
-            [self.syntactic_calc.compute_alignment(c, a) for c, a in zip(child_turns, adult_turns, strict=False)]
-        )
+        for c, a in zip(child_turns, adult_turns, strict=False):
+            lex = self.lexical_calc.compute_alignment(c, a)
+            uni_scores.append(lex["lexical_unigram_alignment"])
+            bi_scores.append(lex["lexical_bigram_alignment"])
+            syn_scores.append(self.syntactic_calc.compute_alignment(c, a))
 
-        # Semantic can be batched efficiently
-        semantic_scores = self.semantic_calc.compute_alignment_batch(child_turns, adult_turns)
+        # semantic_scores = self.semantic_calc.compute_alignment_batch(child_turns, adult_turns)
 
         return {
-            "lexical_alignment": lexical_scores,
-            "syntactic_alignment": syntactic_scores,
-            "semantic_alignment": semantic_scores,
+            "lexical_unigram_alignment": np.array(uni_scores),
+            "lexical_bigram_alignment": np.array(bi_scores),
+            "syntactic_alignment": np.array(syn_scores),
+            # "semantic_alignment": semantic_scores,
         }
