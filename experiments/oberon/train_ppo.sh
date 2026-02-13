@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=train_reward
+#SBATCH --job-name=ppo_cr
 #SBATCH --export=ALL
-#SBATCH --partition=gpu-p1
+#SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=120G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=36:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/rlhf/reward_cr.log
+#SBATCH --output=/scratch2/jliu/Feedback/logs/rlhf/ppo_cr.log
 
 
 # Script and config paths
