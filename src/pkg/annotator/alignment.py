@@ -266,11 +266,11 @@ class LinguisticAlignmentSuite:
             bi_scores.append(lex["lexical_bigram_alignment"])
             syn_scores.append(self.syntactic_calc.compute_alignment(c, a))
 
-        # semantic_scores = self.semantic_calc.compute_alignment_batch(child_turns, adult_turns)
+        semantic_scores = self.semantic_calc.compute_alignment_batch(child_turns, adult_turns)
 
         return {
             "lexical_unigram_alignment": np.array(uni_scores),
             "lexical_bigram_alignment": np.array(bi_scores),
             "syntactic_alignment": np.array(syn_scores),
-            # "semantic_alignment": semantic_scores,
+            "semantic_alignment": semantic_scores,
         }

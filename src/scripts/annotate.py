@@ -131,7 +131,7 @@ def annotate_alignment(
             "align_lexical_unigram": alignment_results["lexical_unigram_alignment"],
             "align_lexical_bigram": alignment_results["lexical_bigram_alignment"],
             "align_syntactic": alignment_results["syntactic_alignment"],
-            # "align_semantic": alignment_results["semantic_alignment"],
+            "align_semantic": alignment_results["semantic_alignment"],
         }
     )
 

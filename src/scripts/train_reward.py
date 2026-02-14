@@ -4,6 +4,7 @@ import warnings
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -26,8 +27,8 @@ from transformers.trainer_pt_utils import nested_detach
 from trl import ModelConfig, RewardConfig, RewardTrainer, get_kbit_device_map, get_peft_config, get_quantization_config
 from trl.trainer.utils import print_rich_table
 
-from pkg.rlhf.data import compute_reward_value
 from pkg.rlhf.utilities import CONVERSATIONS_DATA_FILE
+from pkg.settings import get_torch_device
 
 os.environ["WANDB_LOG_MODEL"] = "false"
 
@@ -231,87 +232,10 @@ class CFRewardTrainer(RewardTrainer):
         return loss
 
 
-def build_reward_model_trainer_datasets1(fb_data_paths, reward_cr, reward_ack, reward_other, reward_column_name="cr"):
-    all_data = []
-    for fb_data_path in fb_data_paths:
-        if os.path.isfile(fb_data_path):
-            print(f"Loading {fb_data_path}")
-            if fb_data_path.endswith(".csv"):
-                data = pd.read_csv(fb_data_path)
-            elif fb_data_path.endswith(".txt"):
-                with open(fb_data_path) as f:
-                    data = f.read().splitlines()
-                data = pd.DataFrame({"transcript_clean": data, "reward": [1] * len(data)})
-            else:
-                raise RuntimeError(f"Unknown data format: {fb_data_path}")
-        else:
-            data = []
-            filenames = list(glob.glob(fb_data_path + "/*.csv")) + list(glob.glob(fb_data_path + "/*.jsonl"))
-            print(f"Loading files from : {fb_data_path}: {filenames}")
-
-            for filename in filenames:
-                if filename.endswith(".csv"):
-                    data.append(pd.read_csv(os.path.join(fb_data_path, filename)))
-                elif filename.endswith(".jsonl"):
-                    data.append(pd.read_json(os.path.join(fb_data_path, filename), lines=True, orient="records"))
-            data = pd.concat(data, ignore_index=True)
-
-        if "transcript_clean" in data.columns and "reward" in data.columns:
-            pass
-        elif "is_cr" in data.columns:
-            print("Building reward model dataset based on DNN CR annotations")
-            print("Not taking into account acknowledgements (reward_ack = reward_other)")
-            data["response_is_clarification_request"] = data["is_cr"]
-            data["response_is_acknowledgement"] = 0
-            data["reward"] = data.apply(
-                compute_reward_value, axis=1, reward_cr=reward_cr, reward_ack=reward_other, reward_other=reward_other
-            )
-            data["transcript_clean"] = data["utt_transcript_clean"]
-        elif "response_is_clarification_request" in data.columns and "response_is_acknowledgement" in data.columns:
-            print("Building reward model dataset based on CR and ACK data")
-            data["reward"] = data.apply(
-                compute_reward_value, axis=1, reward_cr=reward_cr, reward_ack=reward_ack, reward_other=reward_other
-            )
-            data["transcript_clean"] = data["utt_transcript_clean"]
-        elif "is_grammatical" in data.columns:
-            print("Building reward model dataset based on grammaticality")
-            data.dropna(subset=["is_grammatical"], inplace=True)
-            data["reward"] = data["is_grammatical"].apply(lambda x: (x + 1) / 2)  # map to values 0, 0.5, 1
-        elif "sentence_good" in data.columns and "sentence_bad" in data.columns:
-            print("Building reward model dataset based on zorro data")
-            data_good = data[["sentence_good"]].copy()
-            data_good.rename(columns={"sentence_good": "transcript_clean"}, inplace=True)
-            data_good["reward"] = 1
-            data_bad = data[["sentence_bad"]].copy()
-            data_bad.rename(columns={"sentence_bad": "transcript_clean"}, inplace=True)
-            data_bad["reward"] = 0
-            data = pd.concat([data_good, data_bad], ignore_index=True)
-        else:
-            raise RuntimeError("Unknown data format in ", fb_data_path)
-
-        data = data[["transcript_clean", "reward"]]
-        all_data.append(data)
-
-    all_data = pd.concat(all_data, ignore_index=True)
-
-    data_train, data_test = train_test_split(
-        all_data, test_size=TEST_SET_SIZE, shuffle=True, random_state=SPLIT_RANDOM_STATE
-    )
-
-    ds_train = Dataset.from_pandas(data_train)
-    ds_test = Dataset.from_pandas(data_test)
-
-    ds_train.set_format(type="torch")
-    ds_test.set_format(type="torch")
-
-    datasets = DatasetDict({"train": ds_train, "test": ds_test})
-    return datasets
-
-
 def build_reward_model_trainer_datasets(fb_data_paths, reward_column_name="reward"):
     all_data = []
     for fb_data_path in fb_data_paths:
-        if os.path.isfile(fb_data_path):
+        if Path(fb_data_path).is_file():
             print(f"Loading {fb_data_path}")
             if fb_data_path.endswith(".csv"):
                 data = pd.read_csv(fb_data_path)
@@ -323,13 +247,15 @@ def build_reward_model_trainer_datasets(fb_data_paths, reward_column_name="rewar
                 raise RuntimeError(f"Unknown data format: {fb_data_path}")
         else:
             data = []
-            filenames = list(glob.glob(fb_data_path + "/*.csv")) + list(glob.glob(fb_data_path + "/*.jsonl"))
+            filenames = list(glob.glob(str(Path(fb_data_path) / "*.csv"))) + list(
+                glob.glob(str(Path(fb_data_path) / "*.jsonl"))
+            )
             print(f"Loading files from : {fb_data_path}: {filenames}")
             for filename in filenames:
                 if filename.endswith(".csv"):
-                    data.append(pd.read_csv(os.path.join(fb_data_path, filename)))
+                    data.append(pd.read_csv(filename))
                 elif filename.endswith(".jsonl"):
-                    data.append(pd.read_json(os.path.join(fb_data_path, filename), lines=True, orient="records"))
+                    data.append(pd.read_json(filename, lines=True, orient="records"))
             data = pd.concat(data, ignore_index=True)
 
         # replace with the target column
@@ -354,6 +280,21 @@ def build_reward_model_trainer_datasets(fb_data_paths, reward_column_name="rewar
     return datasets
 
 
+def get_latest_checkpoint(output_dir):
+    """Find the latest checkpoint in the output directory."""
+    output_path = Path(output_dir)
+    if not output_path.exists():
+        return None
+
+    checkpoints = list(output_path.glob("checkpoint-*"))
+    if not checkpoints:
+        return None
+
+    # Sort by checkpoint number
+    checkpoints.sort(key=lambda x: int(x.name.split("-")[-1]))
+    return str(checkpoints[-1])
+
+
 @dataclass
 class CFRewardTrainerConfig(RewardConfig):
     data_paths: list[str] = field(default_factory=lambda: [CONVERSATIONS_DATA_FILE])
@@ -361,6 +302,18 @@ class CFRewardTrainerConfig(RewardConfig):
     reward_cr: float = 0
     reward_ack: float = 1
     reward_other: float = 1
+    resume_from_checkpoint: bool = field(
+        default=False, metadata={"help": "Whether to resume training from the latest checkpoint in output_dir"}
+    )
+    checkpoint_path: str = field(
+        default=None,
+        metadata={
+            "help": "Specific checkpoint path to resume from. If None and resume_from_checkpoint=True, uses latest checkpoint."
+        },
+    )
+    wandb_dir: str = field(
+        default=None, metadata={"help": "Directory to save WandB logs. If None, saves to parent of output_dir."}
+    )
 
 
 def main():
@@ -394,27 +347,98 @@ def main():
     trainer_config, model_config = parser.parse_args_into_dataclasses()
     trainer_config.gradient_checkpointing_kwargs = dict(use_reentrant=False)
 
+    # Ensure output directory exists
+    output_path = Path(trainer_config.output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Setup WandB directory - save in parent folder of output_dir
+    if trainer_config.wandb_dir is None:  # noqa: SIM108
+        # Use parent directory of output_dir for wandb logs
+        wandb_path = output_path.parent
+    else:
+        wandb_path = Path(trainer_config.wandb_dir)
+
+    # Ensure wandb directory exists
+    wandb_path.mkdir(parents=True, exist_ok=True)
+    os.environ["WANDB_DIR"] = str(wandb_path)
+
+    print(f"Output directory: {output_path}")
+    print(f"WandB directory: {wandb_path}")
+
+    # Determine checkpoint to resume from
+    resume_checkpoint = None
+    if trainer_config.resume_from_checkpoint:
+        if trainer_config.checkpoint_path is not None:
+            # Use specified checkpoint path
+            checkpoint_path = Path(trainer_config.checkpoint_path)
+            if checkpoint_path.exists():
+                resume_checkpoint = str(checkpoint_path)
+                print(f"Resuming from specified checkpoint: {resume_checkpoint}")
+            else:
+                print(f"WARNING: Specified checkpoint path does not exist: {checkpoint_path}")
+                print("Starting training from scratch")
+        else:
+            # Find latest checkpoint
+            resume_checkpoint = get_latest_checkpoint(trainer_config.output_dir)
+            if resume_checkpoint:
+                print(f"Resuming from latest checkpoint: {resume_checkpoint}")
+            else:
+                print("No checkpoint found in output directory. Starting training from scratch")
+
+    # Initialize WandB
+    wandb_run_id = None
+    if resume_checkpoint:
+        # Try to load the run_id from the checkpoint if it exists
+        try:
+            wandb_run_file = Path(resume_checkpoint) / "wandb_run_id.txt"
+            if wandb_run_file.exists():
+                wandb_run_id = wandb_run_file.read_text().strip()
+                print(f"Resuming WandB run with ID: {wandb_run_id}")
+        except Exception as e:
+            print(f"Could not load WandB run_id from checkpoint: {e}")
+
     wandb.init(
         name=trainer_config.run_name,
         project="lm_feedback_reward_model",
         config=parser.parse_args(),
+        dir=str(wandb_path),
+        id=wandb_run_id,
+        resume="allow" if wandb_run_id else None,
     )
+
+    # Save the wandb run_id for future resumption
+    if wandb.run and wandb.run.id:
+        run_id_file = output_path / "wandb_run_id.txt"
+        run_id_file.write_text(wandb.run.id)
+        print(f"Saved WandB run ID to: {run_id_file}")
 
     ################
     # Model & Tokenizer
     ################
+
+    device = get_torch_device()
+    # Determine model path - use checkpoint if resuming, otherwise use specified model
+    model_path = resume_checkpoint if resume_checkpoint else model_config.model_name_or_path
+
     quantization_config = get_quantization_config(model_config)
     model_kwargs = dict(
         revision=model_config.model_revision,
         device_map=get_kbit_device_map() if quantization_config is not None else None,
         quantization_config=quantization_config,
     )
+
     tokenizer = AutoTokenizer.from_pretrained(
         model_config.model_name_or_path, trust_remote_code=model_config.trust_remote_code, use_fast=True
     )
+
+    print(f"Loading model from: {model_path}")
     model = AutoModelForSequenceClassification.from_pretrained(
-        model_config.model_name_or_path, num_labels=1, trust_remote_code=model_config.trust_remote_code, **model_kwargs
+        model_path, num_labels=1, trust_remote_code=model_config.trust_remote_code, **model_kwargs
     )
+    # Move model to device if device_map wasn't used
+    if model_kwargs.get("device_map") is None:
+        model = model.to(device)
+        print(f"Model moved to: {device}")
 
     if model_config.lora_task_type != "SEQ_CLS":
         warnings.warn(
@@ -425,14 +449,6 @@ def main():
     ################
     # Dataset
     ################
-
-    # raw_datasets = build_reward_model_trainer_datasets(
-    #     trainer_config.data_paths,
-    #     reward_cr=trainer_config.reward_cr,
-    #     reward_ack=trainer_config.reward_ack,
-    #     reward_other=trainer_config.reward_other,
-    #     reward_column_name="cr",
-    # )
 
     raw_datasets = build_reward_model_trainer_datasets(
         trainer_config.data_paths,
@@ -470,13 +486,19 @@ def main():
     )
     trainer.add_callback(progress_callback)
 
-    trainer.train()
+    # Train with resume capability
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
 
     trainer._load_best_model()
 
     metrics = trainer.evaluate()
     trainer.log_metrics("eval", metrics)
     print(metrics)
+
+    # Save final wandb run_id
+    if wandb.run and wandb.run.id:
+        run_id_file = output_path / "wandb_run_id.txt"
+        run_id_file.write_text(wandb.run.id)
 
 
 if __name__ == "__main__":

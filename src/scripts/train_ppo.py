@@ -672,6 +672,9 @@ class CfPPOConfig(PPOConfig):
 
     grammar_eval_model_path: str = None
 
+    # ADD THIS LINE - specify evaluation data directory
+    eval_data_dir: str = None  # Path to evaluation data directory
+
     lm_val_batch_size: int = 512
 
     eval_metrics: list[str] = field(default_factory=lambda: DEFAULT_EVAL_METRICS)

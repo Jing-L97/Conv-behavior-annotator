@@ -19,14 +19,38 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEFAULT_EVAL_METRICS = ["blimp_filtered_childes", "zorro_filtered_childes"]
 
 
-def eval_babylm_metrics(ckpt_dir, eval_batch_size=1024):
+# def eval_babylm_metrics(ckpt_dir, eval_batch_size=1024):
+#     model_args = f"pretrained={ckpt_dir},add_bos_token=True"
+#     with warnings.catch_warnings():
+#         warnings.simplefilter("ignore")
+#         out = evaluator.simple_evaluate(
+#             model="hf",
+#             model_args=model_args,
+#             tasks=DEFAULT_EVAL_METRICS,
+#             batch_size=eval_batch_size,
+#             device=f"cuda:{device}",
+#             cache_requests=True,
+#         )
+
+#     results = parse_babylm_metrics_results(out)
+#     return results
+
+
+def eval_babylm(ckpt_dir, device, config, eval_batch_size=1024):
+    print("Evaluating babylm metrics")
     model_args = f"pretrained={ckpt_dir},add_bos_token=True"
+
+    # Set environment variable for evaluation data directory if provided
+    if config.eval_data_dir is not None:
+        os.environ["EVAL_DATA_DIR"] = config.eval_data_dir
+        print(f"Using evaluation data directory: {config.eval_data_dir}")
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         out = evaluator.simple_evaluate(
             model="hf",
             model_args=model_args,
-            tasks=DEFAULT_EVAL_METRICS,
+            tasks=config.eval_metrics,
             batch_size=eval_batch_size,
             device=f"cuda:{device}",
             cache_requests=True,
