@@ -1,0 +1,19 @@
+name: comm_reward
+channels:
+  - defaults
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.12.4
+  - pip
+  - matplotlib
+  - pandas
+  - pytorch==2.5.1
+  - pytorch-cuda=11.8
+  - lightning==2.6.0
+  - trl==0.10.1
+  - huggingface_hub==0.24.2
+  - transformers==4.44.2
+  - pip:
+      - triton>=3.3,<3.6

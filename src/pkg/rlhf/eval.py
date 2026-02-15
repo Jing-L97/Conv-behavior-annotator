@@ -8,7 +8,6 @@ import pandas as pd
 import torch
 import yaml
 from lm_eval import evaluator
-from train_lm import DEFAULT_EVAL_METRICS
 from transformers import AutoModelForCausalLM, AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer
 
 from grammaticality.grammaticality_annotation.fine_tune_grammaticality_nn import CHILDESGrammarModel
