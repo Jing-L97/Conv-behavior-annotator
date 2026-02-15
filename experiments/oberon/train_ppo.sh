@@ -16,6 +16,7 @@ MODEL_ROOT="/scratch2/jliu/Feedback/models"
 DATA_ROOT="/scratch2/jliu/Feedback/datasets"
 
 
+
 # Run the script with the appropriate configuration
 python -u $SCRIPT_ROOT/train_ppo.py \
     --policy_model $MODEL_ROOT/lm/lightning_logs/he3nnzld/ckpt_huggingface_best/ \
@@ -29,7 +30,8 @@ python -u $SCRIPT_ROOT/train_ppo.py \
     --length_reward_coef 0 \
     --lm_loss_coef 0.001 \
     --exp_name 1e6_reward_topline_seed_3_entropy_001_lm_loss_001_target_6 \
-    --eval_data_dir /scratch2/jliu/Feedback/Conv-behavior-annotator/src/evaluation-pipeline-2024/evaluation_data/blimp_filtered_childes \
+    --eval_data_dir /scratch2/jliu/Feedback/Conv-behavior-annotator/src/evaluation-pipeline-2024/ \
+    --output_dir /scratch2/jliu/models/ppo \
     --wandb_dir /scratch2/jliu/Feedback \
     --seed 3
 

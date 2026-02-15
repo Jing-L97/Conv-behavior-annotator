@@ -608,6 +608,12 @@ def build_policy_trainer_datasets(
 def eval_babylm(model, tokenizer, ckpt_dir, ppo_trainer, device, config, eval_batch_size=1024):
     print("Evaluating babylm metrics")
     model_args = f"pretrained={ckpt_dir},add_bos_token=True"
+
+    # Set environment variable for evaluation data directory if provided
+    if config.eval_data_dir is not None:
+        os.environ["EVAL_DATA_DIR"] = config.eval_data_dir
+        print(f"Using evaluation data directory: {config.eval_data_dir}")
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         out = evaluator.simple_evaluate(
@@ -672,8 +678,11 @@ class CfPPOConfig(PPOConfig):
 
     grammar_eval_model_path: str = None
 
-    # ADD THIS LINE - specify evaluation data directory
-    eval_data_dir: str = None  # Path to evaluation data directory
+    # Path to evaluation data directory
+    eval_data_dir: str = None
+
+    # Path to wandb logging directory
+    wandb_dir: str = None
 
     lm_val_batch_size: int = 512
 
@@ -814,6 +823,22 @@ def main():
     parser = HfArgumentParser(CfPPOConfig)
     config = parser.parse_args_into_dataclasses()[0]
 
+    # Create necessary directories
+    os.makedirs(PPO_CKPTS_DIR, exist_ok=True)
+
+    # Set evaluation data directory if provided
+    if config.eval_data_dir is not None:
+        os.environ["EVAL_DATA_DIR"] = config.eval_data_dir
+        print(f"Using evaluation data directory: {config.eval_data_dir}")
+
+    # Set WandB directory
+    if config.wandb_dir is None:
+        # Default to a subdirectory within the experiment output
+        config.wandb_dir = os.path.join(PPO_CKPTS_DIR, config.exp_name, "wandb")
+    os.makedirs(config.wandb_dir, exist_ok=True)
+    os.environ["WANDB_DIR"] = config.wandb_dir
+    print(f"Using WandB directory: {config.wandb_dir}")
+
     if config.log_with == "wandb":
         wandb_config = copy.deepcopy(config)
         if wandb_config.score_clip is None:
@@ -822,6 +847,7 @@ def main():
             name=wandb_config.exp_name,
             project="lm_feedback_ppo",
             config=wandb_config,
+            dir=config.wandb_dir,
         )
 
     model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
