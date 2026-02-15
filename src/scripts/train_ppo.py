@@ -1,7 +1,9 @@
 import copy
+import glob
 import math
 import os
 import pickle
+import re
 import time
 import typing
 import warnings
@@ -864,15 +866,52 @@ def final_eval(config, trainer):
     pickle.dump(results, open(os.path.join(model_path, "results.p"), "wb"))
 
 
+def find_latest_epoch_checkpoint(exp_dir):
+    """Find the latest epoch_xx checkpoint directory."""
+    epoch_dirs = glob.glob(os.path.join(exp_dir, "epoch_*"))
+    if not epoch_dirs:
+        return None, 0
+
+    # Extract epoch numbers and find the maximum
+    epoch_numbers = []
+    for path in epoch_dirs:
+        match = re.search(r"epoch_(\d+)$", path)
+        if match:
+            epoch_numbers.append((int(match.group(1)), path))
+
+    if not epoch_numbers:
+        return None, 0
+
+    latest_epoch_num, latest_path = max(epoch_numbers, key=lambda x: x[0])
+    return latest_path, latest_epoch_num
+
+
+def find_latest_epoch_checkpoint(exp_dir):
+    """Find the latest epoch_xx checkpoint directory."""
+    epoch_dirs = glob.glob(os.path.join(exp_dir, "epoch_*"))
+    if not epoch_dirs:
+        return None, 0
+
+    # Extract epoch numbers and find the maximum
+    epoch_numbers = []
+    for path in epoch_dirs:
+        match = re.search(r"epoch_(\d+)$", path)
+        if match:
+            epoch_numbers.append((int(match.group(1)), path))
+
+    if not epoch_numbers:
+        return None, 0
+
+    latest_epoch_num, latest_path = max(epoch_numbers, key=lambda x: x[0])
+    return latest_path, latest_epoch_num
+
+
 def main():
     parser = HfArgumentParser(CfPPOConfig)
     config = parser.parse_args_into_dataclasses()[0]
 
     # Determine the base checkpoint directory
-    if config.output_dir is not None:
-        base_ckpt_dir = config.output_dir
-    else:
-        base_ckpt_dir = PPO_CKPTS_DIR
+    base_ckpt_dir = config.output_dir if config.output_dir is not None else PPO_CKPTS_DIR
 
     # Full experiment directory
     config.exp_dir = os.path.join(base_ckpt_dir, config.exp_name)
@@ -905,29 +944,52 @@ def main():
         )
 
     # Check if resuming from checkpoint
-    best_reward_path = os.path.join(config.exp_dir, CKPT_DIR_BEST_REWARD)
-    if config.resume_from_checkpoint and os.path.exists(best_reward_path):
-        print(f"Resuming from checkpoint: {best_reward_path}")
-        model = AutoModelForCausalLMWithValueHead.from_pretrained(best_reward_path)
-        tokenizer = AutoTokenizer.from_pretrained(best_reward_path)
-        ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
+    resume_epoch = 0
+    prev_metrics = None
 
-        # Try to load previous best metrics if they exist
-        metrics_file = os.path.join(best_reward_path, "metrics.pkl")
-        if os.path.exists(metrics_file):
-            with open(metrics_file, "rb") as f:
-                prev_metrics = pickle.load(f)
-                print(f"Loaded previous metrics: {prev_metrics}")
+    if config.resume_from_checkpoint:
+        # First try to find the latest epoch checkpoint
+        latest_epoch_path, latest_epoch_num = find_latest_epoch_checkpoint(config.exp_dir)
+
+        if latest_epoch_path is not None:
+            print(f"Resuming from latest epoch checkpoint: {latest_epoch_path} (epoch {latest_epoch_num})")
+            model = AutoModelForCausalLMWithValueHead.from_pretrained(latest_epoch_path)
+            tokenizer = AutoTokenizer.from_pretrained(latest_epoch_path)
+            ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
+            resume_epoch = latest_epoch_num
+
+            # Load best metrics from best_reward checkpoint if available
+            best_reward_path = os.path.join(config.exp_dir, CKPT_DIR_BEST_REWARD)
+            if os.path.exists(best_reward_path):
+                metrics_file = os.path.join(best_reward_path, "metrics.pkl")
+                if os.path.exists(metrics_file):
+                    with open(metrics_file, "rb") as f:
+                        prev_metrics = pickle.load(f)
+                        print(f"Loaded previous metrics: {prev_metrics}")
         else:
-            prev_metrics = None
+            # Fall back to best_reward checkpoint
+            best_reward_path = os.path.join(config.exp_dir, CKPT_DIR_BEST_REWARD)
+            if os.path.exists(best_reward_path):
+                print(f"No epoch checkpoints found, resuming from: {best_reward_path}")
+                model = AutoModelForCausalLMWithValueHead.from_pretrained(best_reward_path)
+                tokenizer = AutoTokenizer.from_pretrained(best_reward_path)
+                ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
+
+                metrics_file = os.path.join(best_reward_path, "metrics.pkl")
+                if os.path.exists(metrics_file):
+                    with open(metrics_file, "rb") as f:
+                        prev_metrics = pickle.load(f)
+                        print(f"Loaded previous metrics: {prev_metrics}")
+            else:
+                print(f"Checkpoint not found at {best_reward_path}, starting fresh training")
+                model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
+                tokenizer = AutoTokenizer.from_pretrained(config.policy_model)
+                ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
     else:
-        if config.resume_from_checkpoint:
-            print(f"Checkpoint not found at {best_reward_path}, starting fresh training")
         print("Starting fresh training")
         model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
         tokenizer = AutoTokenizer.from_pretrained(config.policy_model)
         ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
-        prev_metrics = None
 
     train_dataset, lm_val_dataset = build_policy_trainer_datasets(
         data_path=config.lm_data_path,
@@ -994,8 +1056,9 @@ def main():
 
     query_length_sampler = LengthSampler(config.query_min_length, config.query_max_length + 1)
     step = 0
-    epoch = 0
+    epoch = resume_epoch  # Start from the resumed epoch
     patience = PATIENCE_STEPS
+
     while step <= config.steps:
         print(f"\nEPOCH: {epoch}")
         epoch += 1
