@@ -1,7 +1,9 @@
 import copy
+import glob
 import math
 import os
 import pickle
+import re
 import time
 import typing
 import warnings
@@ -609,10 +611,9 @@ def eval_babylm(model, tokenizer, ckpt_dir, ppo_trainer, device, config, eval_ba
     print("Evaluating babylm metrics")
     model_args = f"pretrained={ckpt_dir},add_bos_token=True"
 
-    # Set environment variable for evaluation data directory if provided
     if config.eval_data_dir is not None:
-        os.environ["EVAL_DATA_DIR"] = config.eval_data_dir
-        print(f"Using evaluation data directory: {config.eval_data_dir}")
+        os.chdir(config.eval_data_dir)
+        print(f"Changed working directory to: {config.eval_data_dir}")
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -635,11 +636,31 @@ def eval_babylm(model, tokenizer, ckpt_dir, ppo_trainer, device, config, eval_ba
     if results["zorro_filtered_childes"] > ppo_trainer.best_zorro:
         ppo_trainer.best_zorro = results["zorro_filtered_childes"]
         print(f"New best zorro: {results['zorro_filtered_childes']:.2f}, saving checkpoint")
-        save_checkpoint(os.path.join(PPO_CKPTS_DIR, config.exp_name, CKPT_DIR_BEST_ZORRO), model, tokenizer)
+        save_checkpoint(
+            os.path.join(config.exp_dir, CKPT_DIR_BEST_ZORRO),
+            model,
+            tokenizer,
+            metrics={
+                "best_reward": ppo_trainer.best_reward,
+                "best_val_loss": ppo_trainer.best_val_loss,
+                "best_zorro": ppo_trainer.best_zorro,
+                "best_blimp": ppo_trainer.best_blimp,
+            },
+        )
     if results["blimp_filtered_childes"] > ppo_trainer.best_blimp:
         ppo_trainer.best_blimp = results["blimp_filtered_childes"]
         print(f"New best blimp: {results['blimp_filtered_childes']:.2f}, saving checkpoint")
-        save_checkpoint(os.path.join(PPO_CKPTS_DIR, config.exp_name, CKPT_DIR_BEST_BLIMP), model, tokenizer)
+        save_checkpoint(
+            os.path.join(config.exp_dir, CKPT_DIR_BEST_BLIMP),
+            model,
+            tokenizer,
+            metrics={
+                "best_reward": ppo_trainer.best_reward,
+                "best_val_loss": ppo_trainer.best_val_loss,
+                "best_zorro": ppo_trainer.best_zorro,
+                "best_blimp": ppo_trainer.best_blimp,
+            },
+        )
     return results
 
 
@@ -695,6 +716,15 @@ class CfPPOConfig(PPOConfig):
 
     accelerator_kwargs: JSONDict = field(default_factory=lambda: {"mixed_precision": "bf16"})
 
+    # NEW: Custom output directory for model checkpoints
+    output_dir: str = None  # If None, defaults to PPO_CKPTS_DIR
+
+    # NEW: Flag to resume from existing checkpoint
+    resume_from_checkpoint: bool = False
+
+    # Will be set in main() - stores the full experiment directory path
+    exp_dir: str = field(default=None, init=False)
+
 
 def eval_lm_loss(model, tokenizer, config, trainer, lm_val_dataloader, max_batches=100):
     print("Evaluating LM loss")
@@ -720,13 +750,30 @@ def eval_lm_loss(model, tokenizer, config, trainer, lm_val_dataloader, max_batch
     if val_loss < trainer.best_val_loss:
         trainer.best_val_loss = val_loss
         print(f"New best val loss: {val_loss:.4f}, saving checkpoint")
-        save_checkpoint(os.path.join(PPO_CKPTS_DIR, config.exp_name, CKPT_DIR_BEST_VAL_LOSS), model, tokenizer)
+        save_checkpoint(
+            os.path.join(config.exp_dir, CKPT_DIR_BEST_VAL_LOSS),
+            model,
+            tokenizer,
+            metrics={
+                "best_reward": trainer.best_reward,
+                "best_val_loss": trainer.best_val_loss,
+                "best_zorro": trainer.best_zorro,
+                "best_blimp": trainer.best_blimp,
+            },
+        )
 
 
-def save_checkpoint(dir, model, tokenizer):
+def save_checkpoint(dir, model, tokenizer, metrics=None):
     os.makedirs(dir, exist_ok=True)
     model.save_pretrained(dir)
     tokenizer.save_pretrained(dir)
+
+    # Optionally save metrics for resume capability
+    if metrics is not None:
+        metrics_file = os.path.join(dir, "metrics.pkl")
+        with open(metrics_file, "wb") as f:
+            pickle.dump(metrics, f)
+        print(f"Saved metrics to {metrics_file}")
 
 
 def eval(model, tokenizer, config, trainer, ckpt_dir, final=False):
@@ -737,7 +784,7 @@ def eval(model, tokenizer, config, trainer, ckpt_dir, final=False):
             config.grammar_eval_model_path
         )
         gec_model, gec_model_tokenizer = load_gec_model()
-        model_path = os.path.join(PPO_CKPTS_DIR, config.exp_name)
+        model_path = config.exp_dir
         scores_childes_grammar, scores_gec = eval_grammaticality_produced_utts(
             model,
             tokenizer,
@@ -810,21 +857,47 @@ def compute_rewards(
 
 
 def final_eval(config, trainer):
-    model_path = os.path.join(PPO_CKPTS_DIR, config.exp_name, CKPT_DIR_BEST_REWARD)
+    model_path = os.path.join(config.exp_dir, CKPT_DIR_BEST_REWARD)
     print(f"Loading best model from {model_path}")
     model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     model.eval()
     results = eval(model, tokenizer, config, trainer, ckpt_dir=model_path, final=True)
-    pickle.dump(results, open(os.path.join(PPO_CKPTS_DIR, config.exp_name, CKPT_DIR_BEST_REWARD, "results.p"), "wb"))
+    pickle.dump(results, open(os.path.join(model_path, "results.p"), "wb"))
+
+
+def find_latest_epoch_checkpoint(exp_dir):
+    """Find the latest epoch_xx checkpoint directory."""
+    epoch_dirs = glob.glob(os.path.join(exp_dir, "epoch_*"))
+    if not epoch_dirs:
+        return None, 0
+
+    # Extract epoch numbers and find the maximum
+    epoch_numbers = []
+    for path in epoch_dirs:
+        match = re.search(r"epoch_(\d+)$", path)
+        if match:
+            epoch_numbers.append((int(match.group(1)), path))
+
+    if not epoch_numbers:
+        return None, 0
+
+    latest_epoch_num, latest_path = max(epoch_numbers, key=lambda x: x[0])
+    return latest_path, latest_epoch_num
 
 
 def main():
     parser = HfArgumentParser(CfPPOConfig)
     config = parser.parse_args_into_dataclasses()[0]
 
+    # Determine the base checkpoint directory
+    base_ckpt_dir = config.output_dir if config.output_dir is not None else PPO_CKPTS_DIR
+
+    # Full experiment directory
+    config.exp_dir = os.path.join(base_ckpt_dir, config.exp_name)
+
     # Create necessary directories
-    os.makedirs(PPO_CKPTS_DIR, exist_ok=True)
+    os.makedirs(config.exp_dir, exist_ok=True)
 
     # Set evaluation data directory if provided
     if config.eval_data_dir is not None:
@@ -834,24 +907,92 @@ def main():
     # Set WandB directory
     if config.wandb_dir is None:
         # Default to a subdirectory within the experiment output
-        config.wandb_dir = os.path.join(PPO_CKPTS_DIR, config.exp_name, "wandb")
+        config.wandb_dir = os.path.join(config.exp_dir, "wandb")
     os.makedirs(config.wandb_dir, exist_ok=True)
     os.environ["WANDB_DIR"] = config.wandb_dir
     print(f"Using WandB directory: {config.wandb_dir}")
+
+    # Initialize WandB with resume logic
+    wandb_run_id = None
+    if config.resume_from_checkpoint:
+        # Try to load the run_id from the experiment directory if it exists
+        try:
+            wandb_run_file = os.path.join(config.exp_dir, "wandb_run_id.txt")
+            if os.path.exists(wandb_run_file):
+                with open(wandb_run_file) as f:
+                    wandb_run_id = f.read().strip()
+                print(f"Resuming WandB run with ID: {wandb_run_id}")
+        except Exception as e:
+            print(f"Could not load WandB run_id from checkpoint: {e}")
 
     if config.log_with == "wandb":
         wandb_config = copy.deepcopy(config)
         if wandb_config.score_clip is None:
             wandb_config.score_clip = -1
+
         wandb.init(
             name=wandb_config.exp_name,
             project="lm_feedback_ppo",
             config=wandb_config,
             dir=config.wandb_dir,
+            id=wandb_run_id,
+            resume="allow" if wandb_run_id else None,
         )
 
-    model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
-    tokenizer = AutoTokenizer.from_pretrained(config.policy_model)
+        # Save the wandb run_id for future resumption
+        if wandb.run and wandb.run.id:
+            run_id_file = os.path.join(config.exp_dir, "wandb_run_id.txt")
+            with open(run_id_file, "w") as f:
+                f.write(wandb.run.id)
+            print(f"Saved WandB run ID to: {run_id_file}")
+
+    # Check if resuming from checkpoint
+    resume_epoch = 0
+    prev_metrics = None
+
+    if config.resume_from_checkpoint:
+        # First try to find the latest epoch checkpoint
+        latest_epoch_path, latest_epoch_num = find_latest_epoch_checkpoint(config.exp_dir)
+
+        if latest_epoch_path is not None:
+            print(f"Resuming from latest epoch checkpoint: {latest_epoch_path} (epoch {latest_epoch_num})")
+            model = AutoModelForCausalLMWithValueHead.from_pretrained(latest_epoch_path)
+            tokenizer = AutoTokenizer.from_pretrained(latest_epoch_path)
+            ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
+            resume_epoch = latest_epoch_num
+
+            # Load best metrics from best_reward checkpoint if available
+            best_reward_path = os.path.join(config.exp_dir, CKPT_DIR_BEST_REWARD)
+            if os.path.exists(best_reward_path):
+                metrics_file = os.path.join(best_reward_path, "metrics.pkl")
+                if os.path.exists(metrics_file):
+                    with open(metrics_file, "rb") as f:
+                        prev_metrics = pickle.load(f)
+                        print(f"Loaded previous metrics: {prev_metrics}")
+        else:
+            # Fall back to best_reward checkpoint
+            best_reward_path = os.path.join(config.exp_dir, CKPT_DIR_BEST_REWARD)
+            if os.path.exists(best_reward_path):
+                print(f"No epoch checkpoints found, resuming from: {best_reward_path}")
+                model = AutoModelForCausalLMWithValueHead.from_pretrained(best_reward_path)
+                tokenizer = AutoTokenizer.from_pretrained(best_reward_path)
+                ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
+
+                metrics_file = os.path.join(best_reward_path, "metrics.pkl")
+                if os.path.exists(metrics_file):
+                    with open(metrics_file, "rb") as f:
+                        prev_metrics = pickle.load(f)
+                        print(f"Loaded previous metrics: {prev_metrics}")
+            else:
+                print(f"Checkpoint not found at {best_reward_path}, starting fresh training")
+                model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
+                tokenizer = AutoTokenizer.from_pretrained(config.policy_model)
+                ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
+    else:
+        print("Starting fresh training")
+        model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
+        tokenizer = AutoTokenizer.from_pretrained(config.policy_model)
+        ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
 
     train_dataset, lm_val_dataset = build_policy_trainer_datasets(
         data_path=config.lm_data_path,
@@ -860,9 +1001,17 @@ def main():
         query_max_length=config.query_max_length,
     )
 
-    ref_model = AutoModelForCausalLMWithValueHead.from_pretrained(config.policy_model)
-
     ppo_trainer = ChildesPPOTrainer(config, model, ref_model, tokenizer, dataset=train_dataset)
+
+    # Restore previous best metrics if resuming
+    if prev_metrics is not None:
+        ppo_trainer.best_reward = prev_metrics.get("best_reward", -math.inf)
+        ppo_trainer.best_val_loss = prev_metrics.get("best_val_loss", math.inf)
+        ppo_trainer.best_zorro = prev_metrics.get("best_zorro", 0)
+        ppo_trainer.best_blimp = prev_metrics.get("best_blimp", 0)
+        print(
+            f"Restored metrics - best_reward: {ppo_trainer.best_reward}, best_val_loss: {ppo_trainer.best_val_loss}, best_zorro: {ppo_trainer.best_zorro}, best_blimp: {ppo_trainer.best_blimp}"
+        )
 
     if config.value_model == "baseline_constant":
         value_model = None
@@ -910,8 +1059,9 @@ def main():
 
     query_length_sampler = LengthSampler(config.query_min_length, config.query_max_length + 1)
     step = 0
-    epoch = 0
+    epoch = resume_epoch  # Start from the resumed epoch
     patience = PATIENCE_STEPS
+
     while step <= config.steps:
         print(f"\nEPOCH: {epoch}")
         epoch += 1
@@ -922,7 +1072,7 @@ def main():
                 return
 
             if (config.eval_freq != -1) and (step % config.eval_freq == 0):
-                ckpt_dir = os.path.join(PPO_CKPTS_DIR, config.exp_name, f"epoch_{epoch}")
+                ckpt_dir = os.path.join(config.exp_dir, f"epoch_{epoch}")
                 save_checkpoint(ckpt_dir, model, tokenizer)
                 eval(model, tokenizer, config, ppo_trainer, ckpt_dir)
 
@@ -956,8 +1106,18 @@ def main():
                     print(
                         f"New best mean reward at step {ppo_trainer.current_step}: {mean_reward:.4f}, saving checkpoint"
                     )
-                    ckpt_dir = os.path.join(PPO_CKPTS_DIR, config.exp_name, CKPT_DIR_BEST_REWARD)
-                    save_checkpoint(ckpt_dir, model, tokenizer)
+                    ckpt_dir = os.path.join(config.exp_dir, CKPT_DIR_BEST_REWARD)
+                    save_checkpoint(
+                        ckpt_dir,
+                        model,
+                        tokenizer,
+                        metrics={
+                            "best_reward": ppo_trainer.best_reward,
+                            "best_val_loss": ppo_trainer.best_val_loss,
+                            "best_zorro": ppo_trainer.best_zorro,
+                            "best_blimp": ppo_trainer.best_blimp,
+                        },
+                    )
                 else:
                     patience -= 1
 
@@ -970,5 +1130,4 @@ def main():
 
 
 if __name__ == "__main__":
-    os.makedirs(PPO_CKPTS_DIR, exist_ok=True)
     main()

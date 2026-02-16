@@ -640,13 +640,11 @@ def eval_babylm(model, tokenizer, ckpt_dir, ppo_trainer, device, config, eval_ba
             os.path.join(config.exp_dir, CKPT_DIR_BEST_ZORRO),
             model,
             tokenizer,
-            ppo_trainer,
             metrics={
                 "best_reward": ppo_trainer.best_reward,
                 "best_val_loss": ppo_trainer.best_val_loss,
                 "best_zorro": ppo_trainer.best_zorro,
                 "best_blimp": ppo_trainer.best_blimp,
-                "current_step": ppo_trainer.current_step,
             },
         )
     if results["blimp_filtered_childes"] > ppo_trainer.best_blimp:
@@ -656,13 +654,11 @@ def eval_babylm(model, tokenizer, ckpt_dir, ppo_trainer, device, config, eval_ba
             os.path.join(config.exp_dir, CKPT_DIR_BEST_BLIMP),
             model,
             tokenizer,
-            ppo_trainer,
             metrics={
                 "best_reward": ppo_trainer.best_reward,
                 "best_val_loss": ppo_trainer.best_val_loss,
                 "best_zorro": ppo_trainer.best_zorro,
                 "best_blimp": ppo_trainer.best_blimp,
-                "current_step": ppo_trainer.current_step,
             },
         )
     return results
@@ -758,18 +754,16 @@ def eval_lm_loss(model, tokenizer, config, trainer, lm_val_dataloader, max_batch
             os.path.join(config.exp_dir, CKPT_DIR_BEST_VAL_LOSS),
             model,
             tokenizer,
-            trainer,
             metrics={
                 "best_reward": trainer.best_reward,
                 "best_val_loss": trainer.best_val_loss,
                 "best_zorro": trainer.best_zorro,
                 "best_blimp": trainer.best_blimp,
-                "current_step": trainer.current_step,
             },
         )
 
 
-def save_checkpoint(dir, model, tokenizer, ppo_trainer, metrics=None):
+def save_checkpoint(dir, model, tokenizer, metrics=None):
     os.makedirs(dir, exist_ok=True)
     model.save_pretrained(dir)
     tokenizer.save_pretrained(dir)
@@ -872,20 +866,36 @@ def final_eval(config, trainer):
     pickle.dump(results, open(os.path.join(model_path, "results.p"), "wb"))
 
 
-def find_last_checkpoint(exp_dir, prefix: str):
-    """Find the latest checkpoint directory with the assigned prefix."""
-    if prefix == "epoch":
-        epoch_dirs = glob.glob(os.path.join(exp_dir, f"{prefix}_*"))
-    else:
-        epoch_dirs = glob.glob(os.path.join(exp_dir, f"{prefix}-*"))
+def find_latest_epoch_checkpoint(exp_dir):
+    """Find the latest epoch_xx checkpoint directory."""
+    epoch_dirs = glob.glob(os.path.join(exp_dir, "epoch_*"))
     if not epoch_dirs:
         return None, 0
 
     # Extract epoch numbers and find the maximum
     epoch_numbers = []
     for path in epoch_dirs:
-        # Use f-string for regex pattern to include the variable
-        match = re.search(rf"{prefix}_(\d+)$", path) if prefix == "epoch" else re.search(rf"{prefix}-(\d+)$", path)
+        match = re.search(r"epoch_(\d+)$", path)
+        if match:
+            epoch_numbers.append((int(match.group(1)), path))
+
+    if not epoch_numbers:
+        return None, 0
+
+    latest_epoch_num, latest_path = max(epoch_numbers, key=lambda x: x[0])
+    return latest_path, latest_epoch_num
+
+
+def find_latest_epoch_checkpoint(exp_dir):
+    """Find the latest epoch_xx checkpoint directory."""
+    epoch_dirs = glob.glob(os.path.join(exp_dir, "epoch_*"))
+    if not epoch_dirs:
+        return None, 0
+
+    # Extract epoch numbers and find the maximum
+    epoch_numbers = []
+    for path in epoch_dirs:
+        match = re.search(r"epoch_(\d+)$", path)
         if match:
             epoch_numbers.append((int(match.group(1)), path))
 
@@ -922,39 +932,16 @@ def main():
     os.environ["WANDB_DIR"] = config.wandb_dir
     print(f"Using WandB directory: {config.wandb_dir}")
 
-    # Initialize WandB with resume logic
-    wandb_run_id = None
-    if config.resume_from_checkpoint:
-        # Try to load the run_id from the experiment directory if it exists
-        try:
-            wandb_run_file = os.path.join(config.exp_dir, "wandb_run_id.txt")
-            if os.path.exists(wandb_run_file):
-                with open(wandb_run_file) as f:
-                    wandb_run_id = f.read().strip()
-                print(f"Resuming WandB run with ID: {wandb_run_id}")
-        except Exception as e:
-            print(f"Could not load WandB run_id from checkpoint: {e}")
-
     if config.log_with == "wandb":
         wandb_config = copy.deepcopy(config)
         if wandb_config.score_clip is None:
             wandb_config.score_clip = -1
-
         wandb.init(
             name=wandb_config.exp_name,
             project="lm_feedback_ppo",
             config=wandb_config,
             dir=config.wandb_dir,
-            id=wandb_run_id,
-            resume="allow" if wandb_run_id else None,
         )
-
-        # Save the wandb run_id for future resumption
-        if wandb.run and wandb.run.id:
-            run_id_file = os.path.join(config.exp_dir, "wandb_run_id.txt")
-            with open(run_id_file, "w") as f:
-                f.write(wandb.run.id)
-            print(f"Saved WandB run ID to: {run_id_file}")
 
     # Check if resuming from checkpoint
     resume_epoch = 0
@@ -962,7 +949,7 @@ def main():
 
     if config.resume_from_checkpoint:
         # First try to find the latest epoch checkpoint
-        latest_epoch_path, latest_epoch_num = find_last_checkpoint(config.exp_dir, "epoch")
+        latest_epoch_path, latest_epoch_num = find_latest_epoch_checkpoint(config.exp_dir)
 
         if latest_epoch_path is not None:
             print(f"Resuming from latest epoch checkpoint: {latest_epoch_path} (epoch {latest_epoch_num})")
@@ -1019,22 +1006,17 @@ def main():
         ppo_trainer.best_val_loss = prev_metrics.get("best_val_loss", math.inf)
         ppo_trainer.best_zorro = prev_metrics.get("best_zorro", 0)
         ppo_trainer.best_blimp = prev_metrics.get("best_blimp", 0)
-        ppo_trainer.current_step = prev_metrics.get("current_step", 0)
         print(
-            f"Restored metrics - best_reward: {ppo_trainer.best_reward}, best_val_loss: {ppo_trainer.best_val_loss}, best_zorro: {ppo_trainer.best_zorro}, best_blimp: {ppo_trainer.best_blimp}, current_step: {ppo_trainer.current_step}"
+            f"Restored metrics - best_reward: {ppo_trainer.best_reward}, best_val_loss: {ppo_trainer.best_val_loss}, best_zorro: {ppo_trainer.best_zorro}, best_blimp: {ppo_trainer.best_blimp}"
         )
-
-    # automatically detect and load the last ckpt of the value model
 
     if config.value_model == "baseline_constant":
         value_model = None
         value_model_tokenizer = None
     else:
-        value_model_path, _ = find_last_checkpoint(config.value_model, "checkpoint")
-        print(f"Loading value model from: {value_model_path}")
-        value_model = AutoModelForSequenceClassification.from_pretrained(value_model_path)
+        value_model = AutoModelForSequenceClassification.from_pretrained(config.value_model)
         value_model.eval()
-        value_model_tokenizer = AutoTokenizer.from_pretrained(value_model_path)
+        value_model_tokenizer = AutoTokenizer.from_pretrained(config.value_model)
 
     def val_collator(batch):
         return tokenizer.pad(batch, padding=True, return_tensors="pt")
@@ -1088,7 +1070,7 @@ def main():
 
             if (config.eval_freq != -1) and (step % config.eval_freq == 0):
                 ckpt_dir = os.path.join(config.exp_dir, f"epoch_{epoch}")
-                save_checkpoint(ckpt_dir, model, tokenizer, ppo_trainer)
+                save_checkpoint(ckpt_dir, model, tokenizer)
                 eval(model, tokenizer, config, ppo_trainer, ckpt_dir)
 
             use_queries = config.query_max_length > 0
@@ -1126,13 +1108,11 @@ def main():
                         ckpt_dir,
                         model,
                         tokenizer,
-                        ppo_trainer,
                         metrics={
                             "best_reward": ppo_trainer.best_reward,
                             "best_val_loss": ppo_trainer.best_val_loss,
                             "best_zorro": ppo_trainer.best_zorro,
                             "best_blimp": ppo_trainer.best_blimp,
-                            "current_step": ppo_trainer.current_step,
                         },
                     )
                 else:

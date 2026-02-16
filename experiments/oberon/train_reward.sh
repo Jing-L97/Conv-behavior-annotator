@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=18:00:00
 #SBATCH --output=/scratch2/jliu/Feedback/logs/rlhf/reward_%A_%a.log
-#SBATCH --array=0-5
+#SBATCH --array=0-3
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -16,7 +16,7 @@ MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
 
 # Define column names as an array
-COL_NAMES=("sent_approval" "sent_caring" "sent_curiosity" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic")
+COL_NAMES=("sent_engagement" "sent_negativity" "sent_supportiveness" "sent_warmth")
 
 # Get the column name for this array task
 COL_NAME=${COL_NAMES[$SLURM_ARRAY_TASK_ID]}
