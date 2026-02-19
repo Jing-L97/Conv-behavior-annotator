@@ -44,12 +44,6 @@ from trl.core import (
 from trl.trainer.ppo_config import JSONDict
 
 from pkg.rlhf.data import DEFAULT_MAX_LEN
-from pkg.rlhf.eval import (
-    DEFAULT_EVAL_METRICS,
-    eval_grammaticality_produced_utts,
-    load_childes_grammar_model,
-    load_gec_model,
-)
 from pkg.rlhf.utilities import (
     CHILDES_LM_TRAIN_DATA_FILE,
     CHILDES_LM_VAL_DATA_FILE,
@@ -61,6 +55,13 @@ from pkg.rlhf.utilities import (
     DEFAULT_MIN_GENERATION_LEN,
     PPO_CKPTS_DIR,
     parse_babylm_metrics_results,
+)
+
+from .eval import (
+    DEFAULT_EVAL_METRICS,
+    eval_grammaticality_produced_utts,
+    load_childes_grammar_model,
+    load_gec_model,
 )
 
 tqdm.pandas()

@@ -11,28 +11,27 @@ from lm_eval import evaluator
 from transformers import AutoModelForCausalLM, AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer
 
 from grammaticality.grammaticality_annotation.fine_tune_grammaticality_nn import CHILDESGrammarModel
-
-from .utilities import DEFAULT_MAX_GENERATION_LEN, DEFAULT_MIN_GENERATION_LEN, parse_babylm_metrics_results
+from pkg.rlhf.utilities import DEFAULT_MAX_GENERATION_LEN, DEFAULT_MIN_GENERATION_LEN, parse_babylm_metrics_results
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEFAULT_EVAL_METRICS = ["blimp_filtered_childes", "zorro_filtered_childes"]
 
 
-# def eval_babylm_metrics(ckpt_dir, eval_batch_size=1024):
-#     model_args = f"pretrained={ckpt_dir},add_bos_token=True"
-#     with warnings.catch_warnings():
-#         warnings.simplefilter("ignore")
-#         out = evaluator.simple_evaluate(
-#             model="hf",
-#             model_args=model_args,
-#             tasks=DEFAULT_EVAL_METRICS,
-#             batch_size=eval_batch_size,
-#             device=f"cuda:{device}",
-#             cache_requests=True,
-#         )
+def eval_babylm_metrics(ckpt_dir, eval_batch_size=1024):
+    model_args = f"pretrained={ckpt_dir},add_bos_token=True"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        out = evaluator.simple_evaluate(
+            model="hf",
+            model_args=model_args,
+            tasks=DEFAULT_EVAL_METRICS,
+            batch_size=eval_batch_size,
+            device=f"cuda:{device}",
+            cache_requests=True,
+        )
 
-#     results = parse_babylm_metrics_results(out)
-#     return results
+    results = parse_babylm_metrics_results(out)
+    return results
 
 
 def eval_babylm(ckpt_dir, device, config, eval_batch_size=1024):
