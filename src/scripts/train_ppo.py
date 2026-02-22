@@ -16,6 +16,12 @@ import torch.nn.functional as F
 import wandb
 from accelerate.utils import gather_object
 from datasets import Dataset
+from eval import (
+    DEFAULT_EVAL_METRICS,
+    eval_grammaticality_produced_utts,
+    load_childes_grammar_model,
+    load_gec_model,
+)
 from lm_eval import evaluator
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -55,13 +61,6 @@ from pkg.rlhf.utilities import (
     DEFAULT_MIN_GENERATION_LEN,
     PPO_CKPTS_DIR,
     parse_babylm_metrics_results,
-)
-
-from .eval import (
-    DEFAULT_EVAL_METRICS,
-    eval_grammaticality_produced_utts,
-    load_childes_grammar_model,
-    load_gec_model,
 )
 
 tqdm.pandas()

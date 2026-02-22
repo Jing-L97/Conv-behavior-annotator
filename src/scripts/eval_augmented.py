@@ -9,18 +9,18 @@ import pandas as pd
 import torch
 import yaml
 from lm_eval import evaluator
-from RL.Fea_extracter import FeatureExtractor, SemEnt, preprocess  # adjust if needed
 from sentence_transformers import SentenceTransformer
 from train_lm import DEFAULT_EVAL_METRICS
 from transformers import AutoModelForCausalLM, AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer
 from transformers import AutoTokenizer as HFTokenizer
-from utilities import (
+
+from grammaticality.grammaticality_annotation.fine_tune_grammaticality_nn import CHILDESGrammarModel
+from pkg.rlhf.Fea_extracter import FeatureExtractor, SemEnt, preprocess
+from pkg.rlhf.utilities import (
     DEFAULT_MAX_GENERATION_LEN,
     DEFAULT_MIN_GENERATION_LEN,
     parse_babylm_metrics_results,
 )
-
-from grammaticality.grammaticality_annotation.fine_tune_grammaticality_nn import CHILDESGrammarModel
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
