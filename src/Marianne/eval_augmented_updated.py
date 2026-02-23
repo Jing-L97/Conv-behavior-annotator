@@ -1,30 +1,28 @@
 import argparse
 import glob
 import os
-import warnings
 import time
+import warnings
+from collections import Counter
+
 import numpy as np
 import pandas as pd
 import torch
 import yaml
-from collections import Counter
-
-from lm_eval import evaluator
 from grammaticality_annotation.fine_tune_grammaticality_nn import CHILDESGrammarModel
-from train_lm import DEFAULT_EVAL_METRICS
-from transformers import AutoTokenizer, AutoModelForCausalLM, AutoTokenizer as HFTokenizer
-from transformers import T5ForConditionalGeneration, T5Tokenizer
-from sentence_transformers import SentenceTransformer
+from lm_eval import evaluator
 
+# ---- your earlier feature extraction codebase ----
+from RL.Fea_extracter import FeatureExtractor, SemEnt, preprocess  # adjust if needed
+from sentence_transformers import SentenceTransformer
+from train_lm import DEFAULT_EVAL_METRICS
+from transformers import AutoModelForCausalLM, AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer
+from transformers import AutoTokenizer as HFTokenizer
 from utilities import (
     DEFAULT_MAX_GENERATION_LEN,
     DEFAULT_MIN_GENERATION_LEN,
     parse_babylm_metrics_results,
 )
-
-# ---- your earlier feature extraction codebase ----
-from RL.Fea_extracter import FeatureExtractor, SemEnt, preprocess  # adjust if needed
-
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -81,11 +79,13 @@ def compute_scores_childes_grammaticality(utterances, value_model, value_model_t
         logits = value_model(**texts_encoded)["logits"]
 
     scores = torch.argmax(logits, dim=1)  # {0,1,2}
-    scores = scores - 1                   # {-1,0,1}
+    scores = scores - 1  # {-1,0,1}
     return scores.cpu().numpy()
 
 
-def compute_scores_gec(utterances, gec_model, gec_model_tokenizer, max_length=DEFAULT_MAX_GENERATION_LEN * 2, num_beams=5):
+def compute_scores_gec(
+    utterances, gec_model, gec_model_tokenizer, max_length=DEFAULT_MAX_GENERATION_LEN * 2, num_beams=5
+):
     print(f"[GEC] correcting {len(utterances)} utterances", flush=True)
     utterances_gec = ["gec: " + u for u in utterances]
     tok = gec_model_tokenizer(
@@ -108,17 +108,16 @@ def compute_scores_gec(utterances, gec_model, gec_model_tokenizer, max_length=DE
     corrected = gec_model_tokenizer.batch_decode(out, skip_special_tokens=True, clean_up_tokenization_spaces=True)
 
     def clean_utt(utt: str) -> str:
-        for ch in ["?", "!", ".", ",", "\"", "'"]:
+        for ch in ["?", "!", ".", ",", '"', "'"]:
             utt = utt.replace(ch, "")
         return utt.lower()
 
-    scores = np.array([clean_utt(u) == clean_utt(c) for u, c in zip(utterances, corrected)], dtype=int)
+    scores = np.array([clean_utt(u) == clean_utt(c) for u, c in zip(utterances, corrected, strict=False)], dtype=int)
     return scores
 
 
 def compute_entropy_reg(utterances: list[str]) -> float:
-    """
-    entropy_reg = - sum_w p(w) * log(p(w))
+    """entropy_reg = - sum_w p(w) * log(p(w))
     where p(w) = count(w) / total_words over all generated utterances.
     Uses natural log.
     """
@@ -166,13 +165,10 @@ def generate(model, tokenizer, batch_size, output_max_length):
 
 def filter_utts_for_scoring(batch, tokenizer):
     utterances = batch["utts_decoded"]
-    utt_lengths = [
-        (utt != torch.tensor(tokenizer.pad_token_id)).sum().item() - 1
-        for utt in batch["utts"]
-    ]
+    utt_lengths = [(utt != torch.tensor(tokenizer.pad_token_id)).sum().item() - 1 for utt in batch["utts"]]
 
     filtered = []
-    for utt, length, utt_tokens in zip(utterances, utt_lengths, batch["utts"]):
+    for utt, length, utt_tokens in zip(utterances, utt_lengths, batch["utts"], strict=False):
         if length <= DEFAULT_MIN_GENERATION_LEN:
             continue
         if tokenizer.eos_token_id not in utt_tokens:
@@ -182,7 +178,7 @@ def filter_utts_for_scoring(batch, tokenizer):
     if not filtered:
         return [], [], []
 
-    utterances_f, lengths_f = zip(*filtered)
+    utterances_f, lengths_f = zip(*filtered, strict=False)
     return list(utterances_f), list(lengths_f), filtered
 
 
@@ -195,8 +191,7 @@ def compute_feature_metrics_for_utts(
     sent_model: SentenceTransformer,
     feature_list: list[str],
 ):
-    """
-    Compute turn-level metrics (word/syn) per utterance and aggregate.
+    """Compute turn-level metrics (word/syn) per utterance and aggregate.
     Also compute set-level diversity metrics (lemma_div/dep_div/sem_div) and semantic entropy.
     """
     print(f"[Features] computing features for {len(utterances)} utterances", flush=True)
@@ -208,10 +203,12 @@ def compute_feature_metrics_for_utts(
 
     # Build a tiny DataFrame compatible with your FeatureExtractor design
     # We treat everything as one "speaker" for aggregation purposes.
-    df = pd.DataFrame({
-        "cleaned": cleaned,
-        "speaker": ["CHI"] * len(cleaned),
-    })
+    df = pd.DataFrame(
+        {
+            "cleaned": cleaned,
+            "speaker": ["CHI"] * len(cleaned),
+        }
+    )
 
     # Extract docs + embeddings once
     print("[Features] spaCy parsing + dependency graphs", flush=True)
@@ -223,10 +220,21 @@ def compute_feature_metrics_for_utts(
     # Keep only features that are "per utterance" in your codebase
     # (If your FeatureExtractor supports more, you can expand this list.)
     per_utt_features = [
-        "freq", "conc", "word_len", "sent_len", "ttr",
-        "distinct_2", "distinct_3",
-        "tree_depth", "clause", "lex_den", "func_den", "func_den_new", "pp_den",
-        "non_word_rate", "non_word_type_rate",
+        "freq",
+        "conc",
+        "word_len",
+        "sent_len",
+        "ttr",
+        "distinct_2",
+        "distinct_3",
+        "tree_depth",
+        "clause",
+        "lex_den",
+        "func_den",
+        "func_den_new",
+        "pp_den",
+        "non_word_rate",
+        "non_word_type_rate",
     ]
     per_utt_features = [f for f in per_utt_features if f in feature_list]
 
@@ -235,18 +243,17 @@ def compute_feature_metrics_for_utts(
     for i in range(len(cleaned)):
         if i % 100 == 0:
             print(f"[Features] turn-level features {i}/{len(cleaned)}", flush=True)
-            
+
         rows.append(
             feature_extractor.get_turn_fea(
-    df["cleaned"].iloc[i],
-    doc_lst[i] if i < len(doc_lst) else "",
-    lemma_lst[i] if i < len(lemma_lst) else "",
-    per_utt_features,
-    ["VERB", "NOUN", "ADV", "ADJ", "PROPN"],                     # content_POS
-    ["VERB", "NOUN", "PROPN", "ADV", "ADJ", "PRON", "INTJ"],     # target_POS
-    "word",                                                      # func_header
-)
-
+                df["cleaned"].iloc[i],
+                doc_lst[i] if i < len(doc_lst) else "",
+                lemma_lst[i] if i < len(lemma_lst) else "",
+                per_utt_features,
+                ["VERB", "NOUN", "ADV", "ADJ", "PROPN"],  # content_POS
+                ["VERB", "NOUN", "PROPN", "ADV", "ADJ", "PRON", "INTJ"],  # target_POS
+                "word",  # func_header
+            )
         )
     turn_df = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
@@ -320,13 +327,14 @@ def eval_grammaticality_and_features(
 
     for i in range(num_batches):
         last_ping = time.time()
-        
+
         if time.time() - last_ping > 300:  # every 5 minutes
             print(f"[Heartbeat] job still running at batch {i}", flush=True)
             last_ping = time.time()
 
         if i % 5 == 0:
-            print(f"[{model_path}] Batch {i}/{num_batches} | "
+            print(
+                f"[{model_path}] Batch {i}/{num_batches} | "
                 f"generated so far: {total_generated} | "
                 f"scored so far: {len(all_utts)}",
                 flush=True,
@@ -353,7 +361,7 @@ def eval_grammaticality_and_features(
         all_utts.extend(utterances)
 
     # Save sample utterances (optional)
-    #if all_utts:
+    # if all_utts:
     #    sample_n = min(200, len(all_utts))
     #    sample_df = pd.DataFrame({
     #        "utterance": all_utts[:sample_n],
@@ -364,13 +372,15 @@ def eval_grammaticality_and_features(
     # Save ALL scored utterances (long-format) for later metrics/sanity check
     if all_utts:
         os.makedirs(model_path, exist_ok=True)
-        utts_df = pd.DataFrame({
-            "model": [model_path] * len(all_utts),
-            "utterance": all_utts,
-            "length": all_lengths[:len(all_utts)],  # safety
-            "grammaticality_childes_score": all_scores_childes[:len(all_utts)],
-            "grammaticality_gec_score": all_scores_gec[:len(all_utts)],
-        })
+        utts_df = pd.DataFrame(
+            {
+                "model": [model_path] * len(all_utts),
+                "utterance": all_utts,
+                "length": all_lengths[: len(all_utts)],  # safety
+                "grammaticality_childes_score": all_scores_childes[: len(all_utts)],
+                "grammaticality_gec_score": all_scores_gec[: len(all_utts)],
+            }
+        )
         utts_df.to_csv(os.path.join(model_path, "all_utts.csv"), index=False)
 
     # Aggregate grammaticality
@@ -381,14 +391,12 @@ def eval_grammaticality_and_features(
         "num_generated_sentences": int(total_generated),
         "num_scored_sentences": int(len(all_scores_childes)),
     }
-    
+
     # Computing entropy
     results["entropy_reg"] = compute_entropy_reg(all_utts)
 
     # NEW: feature metrics computed on *all scored utterances*
-    feat_metrics = compute_feature_metrics_for_utts(
-        all_utts, feature_extractor, sent_model, feature_list
-    )
+    feat_metrics = compute_feature_metrics_for_utts(all_utts, feature_extractor, sent_model, feature_list)
     results.update(feat_metrics)
 
     print(
@@ -405,12 +413,21 @@ def eval_grammaticality_and_features(
 # Orchestration
 # ----------------------------
 def build_feature_list(fea_set):
-    """
-    Mirrors your earlier fea_dict expansion idea but keeps it local + explicit here.
+    """Mirrors your earlier fea_dict expansion idea but keeps it local + explicit here.
     Adjust / extend as needed.
     """
     fea_dict = {
-        "word": ["freq", "conc", "word_len", "sent_len", "ttr", "non_word_type_rate", "non_word_rate", "distinct_2", "distinct_3"],
+        "word": [
+            "freq",
+            "conc",
+            "word_len",
+            "sent_len",
+            "ttr",
+            "non_word_type_rate",
+            "non_word_rate",
+            "distinct_2",
+            "distinct_3",
+        ],
         "syn": ["tree_depth", "clause", "pp_den", "lex_den", "func_den", "func_den_new"],
         "div": ["lemma_div", "dep_div", "sem_div"],
         "semEnt": ["sem_ent"],  # handled separately but kept for consistency
@@ -449,7 +466,7 @@ def eval_models(args):
             print("skipping non existing ckpt path:", model_path)
             skipped.append(model_path)
             continue
-            
+
         results = {}
 
         # Load LM under eval
@@ -525,7 +542,7 @@ def get_args():
         default=["word", "syn", "div", "semEnt"],
         help="feature groups: word syn div semEnt",
     )
-    
+
     p.add_argument(
         "--output_utts_csv",
         type=str,
@@ -540,5 +557,3 @@ def get_args():
 if __name__ == "__main__":
     args = get_args()
     eval_models(args)
-
-
