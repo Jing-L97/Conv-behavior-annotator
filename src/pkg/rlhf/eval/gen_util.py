@@ -12,7 +12,6 @@ import torch
 from grakel import Graph
 from grakel.kernels import WeisfeilerLehman
 from nltk.util import ngrams
-from RL.setting import *
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity

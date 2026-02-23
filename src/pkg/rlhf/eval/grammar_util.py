@@ -1,61 +1,17 @@
-import argparse
 import glob
 import os
-import warnings
 
 import numpy as np
 import pandas as pd
 import torch
 import yaml
-from lm_eval import evaluator
-from transformers import AutoModelForCausalLM, AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer
+from transformers import AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer
 
 from grammaticality.grammaticality_annotation.fine_tune_grammaticality_nn import CHILDESGrammarModel
-from pkg.rlhf.utilities import DEFAULT_MAX_GENERATION_LEN, DEFAULT_MIN_GENERATION_LEN, parse_babylm_metrics_results
+from pkg.rlhf.utilities import DEFAULT_MAX_GENERATION_LEN, DEFAULT_MIN_GENERATION_LEN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEFAULT_EVAL_METRICS = ["blimp_filtered_childes", "zorro_filtered_childes"]
-
-
-def eval_babylm_metrics(ckpt_dir, eval_batch_size=1024):
-    model_args = f"pretrained={ckpt_dir},add_bos_token=True"
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        out = evaluator.simple_evaluate(
-            model="hf",
-            model_args=model_args,
-            tasks=DEFAULT_EVAL_METRICS,
-            batch_size=eval_batch_size,
-            device=f"cuda:{device}",
-            cache_requests=True,
-        )
-
-    results = parse_babylm_metrics_results(out)
-    return results
-
-
-def eval_babylm(ckpt_dir, device, config, eval_batch_size=1024):
-    print("Evaluating babylm metrics")
-    model_args = f"pretrained={ckpt_dir},add_bos_token=True"
-
-    # Set environment variable for evaluation data directory if provided
-    if config.eval_data_dir is not None:
-        os.environ["EVAL_DATA_DIR"] = config.eval_data_dir
-        print(f"Using evaluation data directory: {config.eval_data_dir}")
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        out = evaluator.simple_evaluate(
-            model="hf",
-            model_args=model_args,
-            tasks=config.eval_metrics,
-            batch_size=eval_batch_size,
-            device=f"cuda:{device}",
-            cache_requests=True,
-        )
-
-    results = parse_babylm_metrics_results(out)
-    return results
 
 
 def compute_scores_childes_grammaticality(utterances, value_model, value_model_tokenizer):
@@ -130,24 +86,6 @@ def compute_scores(
     )
 
     return scores_childes_grammar, scores_gec, utterances
-
-
-def generate(model, tokenizer, batch_size, output_max_length):
-    batch = dict()
-    generation_kwargs = {
-        "min_length": -1,
-        "max_new_tokens": output_max_length,
-        "do_sample": True,
-        "pad_token_id": tokenizer.pad_token_id,
-        "eos_token_id": tokenizer.eos_token_id,
-    }
-    bos_tensor = torch.full((batch_size, 1), tokenizer.bos_token_id, device=device)
-
-    with torch.no_grad():
-        batch["utts"] = model.generate(bos_tensor, **generation_kwargs)
-    batch["utts_decoded"] = [tokenizer.decode(r.squeeze(), skip_special_tokens=True) for r in batch["utts"]]
-
-    return batch
 
 
 def eval_grammaticality_produced_utts(
@@ -227,72 +165,7 @@ def load_childes_grammar_model(eval_model_path):
     eval_model_checkpoint = eval_model_checkpoints[0]
     print(f"##########{hparams}")
     # specify the batch size from here
-    # childes_grammar_model = CHILDESGrammarModel.load_from_checkpoint(eval_model_checkpoint).to(device)
     childes_grammar_model = CHILDESGrammarModel.load_from_checkpoint(eval_model_checkpoint, **hparams).to(device)
 
     childes_grammar_model.eval()
     return childes_grammar_model, childes_grammar_model_tokenizer
-
-
-def eval_models(args):
-    childes_grammar_model, childes_grammar_model_tokenizer = load_childes_grammar_model(args.eval_model_path)
-    gec_model, gec_model_tokenizer = load_gec_model()
-
-    all_results = []
-    skipped = []
-    for model_path in args.model_paths:
-        if not os.path.isdir(model_path):
-            print("skipping non existing ckpt path: ", model_path)
-            skipped.append(model_path)
-            continue
-
-        results = eval_babylm_metrics(model_path)
-        model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model.eval()
-        scores_childes_grammar, scores_gec = eval_grammaticality_produced_utts(
-            model,
-            tokenizer,
-            childes_grammar_model,
-            childes_grammar_model_tokenizer,
-            gec_model,
-            gec_model_tokenizer,
-            model_path,
-        )
-        results.update(
-            {
-                "model": model_path,
-                "grammaticality_childes": np.mean(scores_childes_grammar),
-                "grammaticality_gec": np.mean(scores_gec),
-            }
-        )
-        all_results.append(results)
-
-    all_results = pd.DataFrame(all_results)
-    all_results.set_index("model", inplace=True)
-    all_results.to_csv("results.csv", index=True, index_label="model")
-    print(
-        all_results[
-            ["zorro_filtered_childes", "blimp_filtered_childes", "grammaticality_childes", "grammaticality_gec"]
-        ]
-    )
-
-    print(f"\n\nskipped: {skipped}")
-
-
-def get_args():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument("--model_paths", type=str, nargs="+", required=True)
-    parser.add_argument("--eval_model_path", type=str, required=True)
-
-    parser.add_argument("--batch_size", type=int, default=50)
-    parser.add_argument("--num_batches", type=int, default=200)
-    parser.add_argument("--output_max_length", type=int, default=DEFAULT_MAX_GENERATION_LEN)
-
-    return parser.parse_args()
-
-
-if __name__ == "__main__":
-    args = get_args()
-    eval_models(args)

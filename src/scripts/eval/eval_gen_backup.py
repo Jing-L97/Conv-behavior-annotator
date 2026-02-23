@@ -1,117 +1,54 @@
 import argparse
-import glob
 import os
 import time
-import warnings
+from collections import Counter
 
 import numpy as np
 import pandas as pd
 import torch
-import yaml
-from lm_eval import evaluator
 from sentence_transformers import SentenceTransformer
-from train_lm import DEFAULT_EVAL_METRICS
-from transformers import AutoModelForCausalLM, AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer
-from transformers import AutoTokenizer as HFTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from grammaticality.grammaticality_annotation.fine_tune_grammaticality_nn import CHILDESGrammarModel
-from pkg.rlhf.Fea_extracter import FeatureExtractor, SemEnt, preprocess
-from pkg.rlhf.utilities import (
-    DEFAULT_MAX_GENERATION_LEN,
-    DEFAULT_MIN_GENERATION_LEN,
-    parse_babylm_metrics_results,
+from pkg.rlhf.eval.gen_util import FeatureExtractor, SemEnt, preprocess  # adjust if needed
+from pkg.rlhf.eval.grammar_util import (
+    compute_scores_childes_grammaticality,
+    compute_scores_gec,
+    load_childes_grammar_model,
+    load_gec_model,
 )
+from pkg.rlhf.utilities import DEFAULT_MAX_GENERATION_LEN, DEFAULT_MIN_GENERATION_LEN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 # ----------------------------
-# BabyLM eval harness
-# ----------------------------
-def eval_babylm_metrics(ckpt_dir, eval_batch_size=1024):
-    model_args = f"pretrained={ckpt_dir},add_bos_token=True"
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        out = evaluator.simple_evaluate(
-            model="hf",
-            model_args=model_args,
-            tasks=DEFAULT_EVAL_METRICS,
-            batch_size=eval_batch_size,
-            device="cuda" if torch.cuda.is_available() else "cpu",
-            cache_requests=True,
-        )
-    return parse_babylm_metrics_results(out)
-
-
-# ----------------------------
 # Grammaticality scoring
 # ----------------------------
-def load_gec_model():
-    gec_model = T5ForConditionalGeneration.from_pretrained("Unbabel/gec-t5_small").to(device)
-    gec_model_tokenizer = T5Tokenizer.from_pretrained("t5-small")
-    gec_model.eval()
-    return gec_model, gec_model_tokenizer
+def compute_entropy_reg(utterances: list[str]) -> float:
+    """entropy_reg = - sum_w p(w) * log(p(w))
+    where p(w) = count(w) / total_words over all generated utterances.
+    Uses natural log.
+    """
+    if not utterances:
+        return float("nan")
 
+    # Simple tokenization: whitespace split + lowercase.
+    # If you want consistency with your feature pipeline, you can swap this for preprocess(u).split()
+    tokens = []
+    for u in utterances:
+        if not u:
+            continue
+        tokens.extend(u.lower().split())
 
-def load_childes_grammar_model(eval_model_path):
-    hparams = yaml.safe_load(open(os.path.join(eval_model_path, "hparams.yaml")))
-    childes_grammar_model_tokenizer = HFTokenizer.from_pretrained(hparams["model_name_or_path"], use_fast=True)
+    total = len(tokens)
+    if total == 0:
+        return float("nan")
 
-    eval_model_checkpoints = list(glob.glob(os.path.join(eval_model_path, "checkpoints", "epoch*.ckpt")))
-    assert len(eval_model_checkpoints) == 1, (
-        f"No or multiple checkpoints found in dir {eval_model_path}: {eval_model_checkpoints}"
-    )
-    eval_model_checkpoint = eval_model_checkpoints[0]
-    print(f"Grammar model checkpoint: {eval_model_checkpoint}")
+    counts = Counter(tokens)
+    probs = np.fromiter((c / total for c in counts.values()), dtype=np.float64)
 
-    childes_grammar_model = CHILDESGrammarModel.load_from_checkpoint(eval_model_checkpoint).to(device)
-    childes_grammar_model.eval()
-    return childes_grammar_model, childes_grammar_model_tokenizer
-
-
-def compute_scores_childes_grammaticality(utterances, value_model, value_model_tokenizer):
-    # model expects a speaker prefix token
-    utterances = ["[CHI]" + u for u in utterances]
-    texts_encoded = value_model_tokenizer(utterances, padding=True, return_tensors="pt").to(device)
-    with torch.no_grad():
-        logits = value_model(**texts_encoded)["logits"]
-
-    scores = torch.argmax(logits, dim=1)  # {0,1,2}
-    scores = scores - 1  # {-1,0,1}
-    return scores.cpu().numpy()
-
-
-def compute_scores_gec(
-    utterances, gec_model, gec_model_tokenizer, max_length=DEFAULT_MAX_GENERATION_LEN * 2, num_beams=5
-):
-    print(f"[GEC] correcting {len(utterances)} utterances", flush=True)
-    utterances_gec = ["gec: " + u for u in utterances]
-    tok = gec_model_tokenizer(
-        utterances_gec,
-        max_length=max_length,
-        truncation=True,
-        padding="max_length",
-        return_tensors="pt",
-    ).to(device)
-
-    with torch.no_grad():
-        out = gec_model.generate(
-            input_ids=tok.input_ids,
-            attention_mask=tok.attention_mask,
-            max_length=max_length,
-            num_beams=num_beams,
-            early_stopping=True,
-        )
-
-    corrected = gec_model_tokenizer.batch_decode(out, skip_special_tokens=True, clean_up_tokenization_spaces=True)
-
-    def clean_utt(utt: str) -> str:
-        for ch in ["?", "!", ".", ",", '"', "'"]:
-            utt = utt.replace(ch, "")
-        return utt.lower()
-
-    scores = np.array([clean_utt(u) == clean_utt(c) for u, c in zip(utterances, corrected, strict=False)], dtype=int)
-    return scores
+    # -sum(p log p)
+    return float(-(probs * np.log(probs)).sum())
 
 
 # ----------------------------
@@ -332,15 +269,27 @@ def eval_grammaticality_and_features(
         all_utts.extend(utterances)
 
     # Save sample utterances (optional)
+    # if all_utts:
+    #    sample_n = min(200, len(all_utts))
+    #    sample_df = pd.DataFrame({
+    #        "utterance": all_utts[:sample_n],
+    #    })
+    #    os.makedirs(model_path, exist_ok=True)
+    #    sample_df.to_csv(os.path.join(model_path, "sample_utts.csv"), index=False)
+
+    # Save ALL scored utterances (long-format) for later metrics/sanity check
     if all_utts:
-        sample_n = min(200, len(all_utts))
-        sample_df = pd.DataFrame(
+        os.makedirs(model_path, exist_ok=True)
+        utts_df = pd.DataFrame(
             {
-                "utterance": all_utts[:sample_n],
+                "model": [model_path] * len(all_utts),
+                "utterance": all_utts,
+                "length": all_lengths[: len(all_utts)],  # safety
+                "grammaticality_childes_score": all_scores_childes[: len(all_utts)],
+                "grammaticality_gec_score": all_scores_gec[: len(all_utts)],
             }
         )
-        os.makedirs(model_path, exist_ok=True)
-        sample_df.to_csv(os.path.join(model_path, "sample_utts.csv"), index=False)
+        utts_df.to_csv(os.path.join(model_path, "all_utts.csv"), index=False)
 
     # Aggregate grammaticality
     results = {
@@ -350,6 +299,9 @@ def eval_grammaticality_and_features(
         "num_generated_sentences": int(total_generated),
         "num_scored_sentences": int(len(all_scores_childes)),
     }
+
+    # Computing entropy
+    results["entropy_reg"] = compute_entropy_reg(all_utts)
 
     # NEW: feature metrics computed on *all scored utterances*
     feat_metrics = compute_feature_metrics_for_utts(all_utts, feature_extractor, sent_model, feature_list)
@@ -402,6 +354,12 @@ def build_feature_list(fea_set):
 
 
 def eval_models(args):
+    # Resolve output path safely
+    output_path = os.path.abspath(args.output_csv)
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
     # Load value models once
     childes_grammar_model, childes_grammar_model_tokenizer = load_childes_grammar_model(args.eval_model_path)
     gec_model, gec_model_tokenizer = load_gec_model()
@@ -418,47 +376,58 @@ def eval_models(args):
     skipped = []
 
     for model_path in args.model_paths:
+        model_path = os.path.abspath(model_path)
+
+        print(f"\nChecking model path: {model_path}")
+
         if not os.path.isdir(model_path):
-            print("skipping non existing ckpt path:", model_path)
+            print("Skipping non-existing checkpoint path:", model_path)
             skipped.append(model_path)
             continue
 
-        # Standard BabyLM metrics
-        results = eval_babylm_metrics(model_path, eval_batch_size=args.eval_batch_size)
+        try:
+            # Load LM under eval
+            model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
+            tokenizer = AutoTokenizer.from_pretrained(model_path)
+            model.eval()
 
-        # Load LM under eval
-        model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
-        tokenizer = AutoTokenizer.from_pretrained(model_path)
-        model.eval()
+            # Evaluate
+            extra = eval_grammaticality_and_features(
+                model=model,
+                tokenizer=tokenizer,
+                childes_grammar_model=childes_grammar_model,
+                childes_grammar_model_tokenizer=childes_grammar_model_tokenizer,
+                gec_model=gec_model,
+                gec_model_tokenizer=gec_model_tokenizer,
+                feature_extractor=feature_extractor,
+                sent_model=sent_model,
+                feature_list=feature_list,
+                model_path=model_path,
+                num_batches=args.num_batches,
+                batch_size=args.batch_size,
+                output_max_length=args.output_max_length,
+            )
 
-        # Add grammaticality + feature metrics
-        extra = eval_grammaticality_and_features(
-            model=model,
-            tokenizer=tokenizer,
-            childes_grammar_model=childes_grammar_model,
-            childes_grammar_model_tokenizer=childes_grammar_model_tokenizer,
-            gec_model=gec_model,
-            gec_model_tokenizer=gec_model_tokenizer,
-            feature_extractor=feature_extractor,
-            sent_model=sent_model,
-            feature_list=feature_list,
-            model_path=model_path,
-            num_batches=args.num_batches,
-            batch_size=args.batch_size,
-            output_max_length=args.output_max_length,
-        )
+            results = {"model": model_path}
+            results.update(extra)
+            all_results.append(results)
 
-        results.update({"model": model_path})
-        results.update(extra)
-        all_results.append(results)
+        except Exception as e:
+            print(f"Error while evaluating {model_path}: {e}")
+            skipped.append(model_path)
+            continue
+
+    # Handle case where no models were successfully evaluated
+    if not all_results:
+        print("\nNo valid results produced. Nothing to save.")
+        print(f"Skipped paths: {skipped}")
+        return
 
     df = pd.DataFrame(all_results).set_index("model")
-    df.to_csv(args.output_csv, index=True, index_label="model")
+    df.to_csv(output_path, index=True, index_label="model")
 
-    # Print a compact view
+    # Print compact summary if columns exist
     cols_to_show = [
-        "zorro_filtered_childes",
-        "blimp_filtered_childes",
         "grammaticality_childes",
         "grammaticality_gec",
         "conc_mean",
@@ -470,10 +439,14 @@ def eval_models(args):
         "sem_div_set",
     ]
     cols_to_show = [c for c in cols_to_show if c in df.columns]
-    print("\nSummary:\n", df[cols_to_show])
 
-    print(f"\n\nskipped: {skipped}")
-    print(f"saved: {args.output_csv}")
+    if cols_to_show:
+        print("\nSummary:\n", df[cols_to_show])
+    else:
+        print("\nResults saved, but no summary columns available.")
+
+    print(f"\nSkipped: {skipped}")
+    print(f"Saved results to: {output_path}")
 
 
 def get_args():
@@ -500,6 +473,13 @@ def get_args():
         nargs="+",
         default=["word", "syn", "div", "semEnt"],
         help="feature groups: word syn div semEnt",
+    )
+
+    p.add_argument(
+        "--output_utts_csv",
+        type=str,
+        default="utterances.csv",
+        help="Where to save all generated utterances (long format).",
     )
 
     p.add_argument("--output_csv", type=str, default="results.csv")
