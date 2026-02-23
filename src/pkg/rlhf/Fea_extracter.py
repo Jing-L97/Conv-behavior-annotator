@@ -1,4 +1,6 @@
 import math
+import re
+import string
 from collections import Counter
 from pathlib import Path
 
@@ -26,6 +28,47 @@ spell = SpellChecker()
 def is_word(word: str):
     """Check if a word is a legitimate English word."""
     return len(spell.unknown([word])) == 0
+
+
+def remove_annotation(sentences):
+    return [re.sub(r"\s*\(.*?\)\s*|\s*\*.*?\*\s*", " ", sentence).strip() for sentence in sentences]
+
+
+def remove_emoji(text):
+    # Regex pattern to match emojis and remove them
+    emoji_pattern = re.compile(
+        "[\U0001f600-\U0001f64f"  # Emoticons
+        "\U0001f300-\U0001f5ff"  # Symbols & Pictographs
+        "\U0001f680-\U0001f6ff"  # Transport & Map Symbols
+        "\U0001f700-\U0001f77f"  # Alchemical Symbols
+        "\U0001f780-\U0001f7ff"  # Geometric Shapes Extended
+        "\U0001f800-\U0001f8ff"  # Supplemental Arrows-C
+        "\U0001f900-\U0001f9ff"  # Supplemental Symbols & Pictographs
+        "\U0001fa00-\U0001fa6f"  # Chess Symbols
+        "\U0001fa70-\U0001faff"  # Symbols & Pictographs Extended-A
+        "\U00002702-\U000027b0"  # Dingbats
+        "\U000024c2-\U0001f251"  # Enclosed Characters
+        "]",
+        flags=re.UNICODE,
+    )
+    return emoji_pattern.sub("", text)
+
+
+def preprocess(sent: str, remove_punc=False) -> str:
+    try:
+        # Remove other annotations and convert to lowercase
+        sent = remove_annotation([sent])[0].lower()
+        # Remove emojis
+        sent = remove_emoji(sent)
+        # Remove <PAUSE> and <SILENCE> tags, along with their annotations and extra spaces
+        text = re.sub(r"\s*<[^>]*>\s*", " ", sent).strip()
+        # Optionally remove punctuation
+        if remove_punc:
+            text = text.translate(str.maketrans("", "", string.punctuation))
+    except Exception as e:
+        print(f"Error in preprocessing: {e}")
+        text = sent
+    return text
 
 
 ##########################
