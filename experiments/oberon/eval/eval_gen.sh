@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=ppo_align
+#SBATCH --job-name=eval_gen
 #SBATCH --export=ALL
-#SBATCH --partition=erc-dupoux
+#SBATCH --partition=gpu-p1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/rlhf/ppo_eval.log
-#SBATCH --array=0-1
+#SBATCH --output=/scratch2/jliu/Feedback/logs/rlhf/eval_gen_%A_%a.log
+#SBATCH --array=0-12
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -23,7 +23,6 @@ REWARDS=(“cr” "is_acknowledgement" "align_lexical_unigram" "align_lexical_bi
 # Get the column name for this array task
 REWARD=${REWARDS[$SLURM_ARRAY_TASK_ID]}
 
-REWARD=cr
 PPO_MODEL=$MODEL_ROOT/ppo/$EXP/${REWARD}_$EXP/best_reward
 OUTPUT_DIR=$ROOT/results/ppo/$EXP/${REWARD}_$EXP
 
@@ -33,6 +32,5 @@ python -u $SCRIPT_ROOT/eval/eval_gen.py \
     --word_info_path $DATA_ROOT/evaluation_data/gen/word_info.csv \
     --func_info_path $DATA_ROOT/evaluation_data/gen/func_info.csv \
     --output_utts_csv $OUTPUT_DIR/utt.csv \
-    --output_csv $OUTPUT_DIR/output.csv \
-    --batch_size 64 --num_batches 2 
+    --output_csv $OUTPUT_DIR/result.csv 
 

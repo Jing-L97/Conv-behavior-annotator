@@ -108,19 +108,8 @@ def compute_feature_metrics_for_utts(
     feature_extractor: FeatureExtractor,
     sent_model: SentenceTransformer,
     feature_list: list[str],
-):
-    """Compute turn-level metrics (word/syn) per utterance and aggregate.
-    Also compute set-level diversity metrics (lemma_div/dep_div/sem_div) and semantic entropy.
-
-    Returns
-    -------
-    turn_df : pd.DataFrame
-        One row per utterance, one column per turn-level feature.
-        Empty DataFrame if no utterances or no per-utterance features apply.
-    agg : dict
-        Aggregated (mean) values of turn-level features, plus set-level diversity metrics.
-
-    """
+) -> dict:
+    """Compute turn-level metrics (word/syn) per utterance and aggregate."""
     print(f"[Features] computing features for {len(utterances)} utterances", flush=True)
     if len(utterances) == 0:
         return pd.DataFrame(), {}
@@ -300,9 +289,8 @@ def eval_grammaticality_and_features(
     n = len(all_utts)
     utts_df = pd.DataFrame(
         {
-            "model": [model_path] * n,
             "utterance": all_utts,
-            "length": all_lengths[:n],
+            "token_length": all_lengths[:n],
             "grammaticality_childes_score": all_scores_childes[:n],
             "grammaticality_gec_score": all_scores_gec[:n],
         }
@@ -451,7 +439,9 @@ def eval_models(args):
         return
 
     df = pd.DataFrame(all_results).set_index("model")
-    df.to_csv(output_path, index=True, index_label="model")
+    output_csv_base, output_csv_ext = os.path.splitext(output_path)
+    output_csv = f"{output_csv_base}_{model_basename}{output_csv_ext}"
+    df.to_csv(output_csv, index=True, index_label="model")
 
     cols_to_show = [
         "grammaticality_childes",
@@ -472,7 +462,7 @@ def eval_models(args):
         print("\nResults saved, but no summary columns available.")
 
     print(f"\nSkipped: {skipped}")
-    print(f"Saved results to: {output_path}")
+    print(f"Saved results to: {output_csv}")
 
 
 def get_args():
