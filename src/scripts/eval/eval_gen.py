@@ -395,11 +395,14 @@ def eval_models(args):
             skipped.append(model_path)
             continue
 
-        # Derive a per-model utterance CSV path from --output_utts_csv
-        # e.g. utterances.csv → utterances_<model_basename>.csv
         model_basename = os.path.basename(model_path)
-        utts_csv_base, utts_csv_ext = os.path.splitext(args.output_utts_csv)
-        output_utts_csv = f"{utts_csv_base}_{model_basename}{utts_csv_ext}"
+
+        # ---- Utterance CSV naming ----
+        if getattr(args, "baseline", False):
+            output_utts_csv = args.output_utts_csv
+        else:
+            utts_csv_base, utts_csv_ext = os.path.splitext(args.output_utts_csv)
+            output_utts_csv = f"{utts_csv_base}_{model_basename}{utts_csv_ext}"
 
         try:
             model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
@@ -421,7 +424,7 @@ def eval_models(args):
                 num_batches=args.num_batches,
                 batch_size=args.batch_size,
                 output_max_length=args.output_max_length,
-                eval_batch_size=args.eval_batch_size,  # now wired up
+                eval_batch_size=args.eval_batch_size,
             )
 
             results = {"model": model_path}
@@ -439,8 +442,15 @@ def eval_models(args):
         return
 
     df = pd.DataFrame(all_results).set_index("model")
-    output_csv_base, output_csv_ext = os.path.splitext(output_path)
-    output_csv = f"{output_csv_base}_{model_basename}{output_csv_ext}"
+
+    # ---- Final results CSV naming ----
+    if getattr(args, "baseline", False):
+        output_csv = output_path
+    else:
+        output_csv_base, output_csv_ext = os.path.splitext(output_path)
+        # Use last processed model basename (consistent with original behavior)
+        output_csv = f"{output_csv_base}_{model_basename}{output_csv_ext}"
+
     df.to_csv(output_csv, index=True, index_label="model")
 
     cols_to_show = [
@@ -504,6 +514,7 @@ def get_args():
     )
 
     p.add_argument("--output_csv", type=str, default="results.csv")
+    p.add_argument("--baseline", action="store_true", help="If set, do not modify output filenames or directories.")
     return p.parse_args()
 
 

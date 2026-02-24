@@ -5,9 +5,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=24:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_gen_%A_%a.log
-#SBATCH --array=0-1
+#SBATCH --time=2:00:00
+#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_gen_vanilla.log
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -17,15 +16,9 @@ DATA_ROOT=$ROOT/"datasets"
 OUT_ROOT=$ROOT/"results"
 EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
 
-# Define column names as an array
-#REWARDS=("topline" “cr” "is_acknowledgement" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" "sent_engagement" "sent_negativity" "sent_supportiveness" "sent_warmth" "sent_approval" "sent_caring" "sent_curiosity")
-REWARDS=("topline" "cr")
 
-# Get the column name for this array task
-REWARD=${REWARDS[$SLURM_ARRAY_TASK_ID]}
-
-PPO_MODEL=$MODEL_ROOT/ppo/$EXP/${REWARD}_$EXP/best_reward
-OUTPUT_DIR=$ROOT/results/ppo/$EXP/${REWARD}_$EXP
+PPO_MODEL=$MODEL_ROOT/lm/lightning_logs/he3nnzld/ckpt_huggingface_best
+OUTPUT_DIR=$ROOT/results/baseline
 
 python -u $SCRIPT_ROOT/eval/eval_gen.py \
     --model_paths $PPO_MODEL \
@@ -35,5 +28,6 @@ python -u $SCRIPT_ROOT/eval/eval_gen.py \
     --output_utts_csv $OUTPUT_DIR/utt.csv \
     --output_csv $OUTPUT_DIR/result.csv \
     --batch_size 50 \
-    --num_batches 10
+    --num_batches 10 \
+    --baseline
 
