@@ -24,7 +24,7 @@ COL_NAME=${COL_NAMES[$SLURM_ARRAY_TASK_ID]}
 echo "Training reward model for column: $COL_NAME"
 
 python $SCRIPT_ROOT/train_reward.py \
-    --data_path $DATA_ROOT/annotated/conversations_min_age_10_all.csv \
+    --data_path $DATA_ROOT/annotated/conversations_min_age_10.csv \
     --model_name_or_path microsoft/deberta-v3-xsmall \
     --output_dir $MODEL_ROOT/reward/$COL_NAME \
     --reward_column_name $COL_NAME \
