@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=ppo_cr
+#SBATCH --job-name=ppo_sent_reverse
 #SBATCH --export=ALL
 #SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=18:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/rlhf/ppo_cr.log
+#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/sent_reverse.log
 
 
 # Script and config paths
@@ -17,10 +17,10 @@ DATA_ROOT=$ROOT/"datasets"
 EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
 
 # Get the column name for this array task
-REWARD="cr"
+REWARD="sent_negativity"
 
 # Run the script with the appropriate configuration
-python -u $SCRIPT_ROOT/train_ppo.py \
+python -u $SCRIPT_ROOT/train/train_ppo.py \
     --policy_model $MODEL_ROOT/lm/lightning_logs/he3nnzld/ckpt_huggingface_best/ \
     --value_model $MODEL_ROOT/reward/$REWARD \
     --steps 6000 \
@@ -33,8 +33,9 @@ python -u $SCRIPT_ROOT/train_ppo.py \
     --lm_loss_coef 0.001 \
     --exp_name $REWARD"_"$EXP \
     --eval_data_dir $DATA_ROOT \
-    --output_dir $MODEL_ROOT/ppo/$REWARD_$EXP \
+    --output_dir $MODEL_ROOT/ppo/$REWARD"_reverse_"$EXP \
     --wandb_dir $ROOT \
+    --reward $REWARD"_reverse" \
     --seed 3
 
 

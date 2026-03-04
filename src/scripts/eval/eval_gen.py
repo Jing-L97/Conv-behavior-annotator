@@ -1,7 +1,9 @@
 import argparse
+import hashlib
+import math
 import os
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 
 import numpy as np
 import pandas as pd
@@ -46,6 +48,115 @@ def compute_entropy_reg(utterances: list[str]) -> float:
     probs = np.fromiter((c / total for c in counts.values()), dtype=np.float64)
 
     return float(-(probs * np.log(probs)).sum())
+
+
+# ============================================================
+# FAST + EXACT diversity helpers (closed-form mean cosine)
+# ============================================================
+
+
+def _mean_cosine_closed_form(sum_norm2: float, n: int) -> float:
+    # mean over ordered pairs i != j
+    return (sum_norm2 - n) / (n * (n - 1))
+
+
+def mean_pairwise_cosine_dense_closed_form(vectors: list[np.ndarray], eps: float = 1e-12) -> float:
+    """Exact mean cosine over i!=j for dense vectors using:
+    (||sum x_hat||^2 - n) / (n(n-1))
+    """
+    valid = [v for v in vectors if isinstance(v, np.ndarray) and v.size > 0 and not np.isnan(v).any()]
+    n = len(valid)
+    if n < 2:
+        return float("nan")
+
+    S = None
+    for v in valid:
+        v = v.astype(np.float32, copy=False)
+        vhat = v / (float(np.linalg.norm(v)) + eps)  # L2 normalize once
+        S = vhat.copy() if S is None else (S + vhat)
+
+    sum_norm2 = float(np.dot(S, S))
+    return _mean_cosine_closed_form(sum_norm2, n)
+
+
+def l2_normalize_counter(counter: Counter, eps: float = 1e-12) -> dict[str, float]:
+    norm2 = sum(float(c) * float(c) for c in counter.values())
+    if norm2 <= eps:
+        return {}
+    inv = 1.0 / math.sqrt(norm2)
+    return {k: float(v) * inv for k, v in counter.items()}
+
+
+def mean_pairwise_cosine_sparse_closed_form(vhats: list[dict[str, float]]) -> float:
+    """Exact mean cosine over i!=j for sparse L2-normalized vectors (dict feature->value)."""
+    vhats = [v for v in vhats if v]
+    n = len(vhats)
+    if n < 2:
+        return float("nan")
+
+    sums = defaultdict(float)
+    for v in vhats:
+        for k, val in v.items():
+            sums[k] += float(val)
+
+    sum_norm2 = sum(val * val for val in sums.values())
+    return _mean_cosine_closed_form(sum_norm2, n)
+
+
+# ============================================================
+# FAST dep_div: explicit WL feature vector φ(G) from spaCy docs
+# (matches your dependency_tree_to_graph node labels & edges)
+# ============================================================
+
+
+def _hash_label(s: str) -> str:
+    return hashlib.md5(s.encode("utf-8")).hexdigest()
+
+
+def spacy_doc_to_adj_and_labels(doc) -> tuple[list[list[int]], list[str]]:
+    """Build adjacency + node labels exactly like your dependency_tree_to_graph:
+    - undirected edges between token and head
+    - node label: POS + DEP + token.text.lower + is_stop + is_punct
+    """
+    n = len(doc)
+    adj = [[] for _ in range(n)]
+    labels = [""] * n
+
+    for i, token in enumerate(doc):
+        label_parts = [
+            token.pos_,
+            token.dep_,
+            token.text.lower(),
+            str(token.is_stop),
+            str(token.is_punct),
+        ]
+        labels[i] = "_".join(label_parts)
+
+        h = token.head.i
+        if 0 <= h < n and h != i:
+            adj[i].append(h)
+            adj[h].append(i)
+
+    return adj, labels
+
+
+def wl_phi_from_spacy_doc(doc, n_iter: int = 5) -> Counter:
+    """Explicit WL feature vector φ(G): histogram of WL node labels across iterations.
+    Computed once per doc (no pairwise WL kernel).
+    """
+    adj, cur = spacy_doc_to_adj_and_labels(doc)
+    feats = Counter(cur)
+
+    for _ in range(n_iter):
+        new = []
+        for i in range(len(cur)):
+            neigh = sorted(cur[j] for j in adj[i])
+            signature = cur[i] + "|" + "|".join(neigh)
+            new.append(_hash_label(signature))
+        cur = new
+        feats.update(cur)
+
+    return feats
 
 
 # ----------------------------
@@ -124,7 +235,9 @@ def compute_feature_metrics_for_utts(
     )
 
     print("[Features] spaCy parsing + dependency graphs", flush=True)
-    doc_lst, lemma_lst, dep_graphs = feature_extractor.extract_doc(df["cleaned"], feature_list)
+    # doc_lst, lemma_lst, dep_graphs = feature_extractor.extract_doc(df["cleaned"], feature_list)
+    doc_lst, lemma_lst = feature_extractor.extract_doc(df["cleaned"], feature_list, return_dep_graphs=False)
+    dep_graphs = None  # not used anymore
     print("[Features] sentence embeddings", flush=True)
     word_vectors = feature_extractor.extract_vec(df["cleaned"], feature_list)
 
@@ -175,21 +288,33 @@ def compute_feature_metrics_for_utts(
         if pd.api.types.is_numeric_dtype(turn_df[col]):
             agg[f"{col}_mean"] = float(turn_df[col].mean())
 
-    # --- Set-level diversity features ---
-    indices = list(range(len(cleaned)))
+    # --- Set-level diversity features (FAST + EXACT; no pairwise matrices) ---
+    indices = list(range(len(cleaned)))  # keep for SemEnt below
 
-    div_candidates = [f for f in ["lemma_div", "dep_div", "sem_div"] if f in feature_list]
-    if div_candidates:
-        div_vals = feature_extractor.get_div_fea(feature_list, indices, lemma_lst, dep_graphs, word_vectors)
-        if isinstance(div_vals, dict):
-            for k, v in div_vals.items():
-                try:
-                    agg[f"{k}_set"] = float(v)
-                except Exception:
-                    pass
-        elif isinstance(div_vals, (list, tuple, np.ndarray)):
-            for j, v in enumerate(div_vals):
-                agg[f"div_{j}_set"] = float(v)
+    # sem_div: closed-form mean cosine on L2-normalized embeddings
+    if "sem_div" in feature_list:
+        mean_cos = mean_pairwise_cosine_dense_closed_form(word_vectors)
+        agg["sem_div_set"] = float("nan") if np.isnan(mean_cos) else float(1.0 - mean_cos)
+
+    # lemma_div: global vocab (implicit) + per-utt count vectors + L2 normalize once + closed-form
+    if "lemma_div" in feature_list:
+        lemma_vhats = []
+        for lem in lemma_lst:
+            if isinstance(lem, list) and len(lem) > 0:
+                lemma_vhats.append(l2_normalize_counter(Counter(lem)))
+        mean_cos = mean_pairwise_cosine_sparse_closed_form(lemma_vhats)
+        agg["lemma_div_set"] = float("nan") if np.isnan(mean_cos) else float(1.0 - mean_cos)
+
+    # dep_div: explicit WL feature vector φ(G) computed once per spaCy doc + L2 normalize + closed-form
+    if "dep_div" in feature_list:
+        wl_vhats = []
+        for doc in doc_lst:
+            if doc is None or (isinstance(doc, float) and np.isnan(doc)):
+                continue
+            phi = wl_phi_from_spacy_doc(doc, n_iter=5)
+            wl_vhats.append(l2_normalize_counter(phi))
+        mean_cos = mean_pairwise_cosine_sparse_closed_form(wl_vhats)
+        agg["dep_div_set"] = float("nan") if np.isnan(mean_cos) else float(1.0 - mean_cos)
 
     # --- Semantic entropy (set-level) ---
     try:

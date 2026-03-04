@@ -16,14 +16,14 @@ MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
 
 # Define column names as an array
-COL_NAMES=("sent_engagement" "sent_negativity" "sent_supportiveness" "sent_warmth")
+COL_NAMES=("cr" "sent_negativity" "sent_supportiveness" "sent_warmth")
 
 # Get the column name for this array task
 COL_NAME=${COL_NAMES[$SLURM_ARRAY_TASK_ID]}
 
 echo "Training reward model for column: $COL_NAME"
 
-python $SCRIPT_ROOT/train_reward.py \
+python $SCRIPT_ROOT/train/train_reward.py \
     --data_path $DATA_ROOT/annotated/conversations_min_age_10.csv \
     --model_name_or_path microsoft/deberta-v3-xsmall \
     --output_dir $MODEL_ROOT/reward/$COL_NAME \

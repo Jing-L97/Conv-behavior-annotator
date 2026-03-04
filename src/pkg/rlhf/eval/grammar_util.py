@@ -88,6 +88,24 @@ def compute_scores(
     return scores_childes_grammar, scores_gec, utterances
 
 
+def generate(model, tokenizer, batch_size, output_max_length):
+    batch = dict()
+    generation_kwargs = {
+        "min_length": -1,
+        "max_new_tokens": output_max_length,
+        "do_sample": True,
+        "pad_token_id": tokenizer.pad_token_id,
+        "eos_token_id": tokenizer.eos_token_id,
+    }
+    bos_tensor = torch.full((batch_size, 1), tokenizer.bos_token_id, device=device)
+
+    with torch.no_grad():
+        batch["utts"] = model.generate(bos_tensor, **generation_kwargs)
+    batch["utts_decoded"] = [tokenizer.decode(r.squeeze(), skip_special_tokens=True) for r in batch["utts"]]
+
+    return batch
+
+
 def eval_grammaticality_produced_utts(
     model,
     tokenizer,

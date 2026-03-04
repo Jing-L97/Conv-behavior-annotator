@@ -67,6 +67,7 @@ tqdm.pandas()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 PATIENCE_STEPS = 10
+reverse_lst = ["cr", "sent_negativity"]
 
 
 class ChildesPPOTrainer(PPOTrainer):
@@ -723,8 +724,10 @@ class CfPPOConfig(PPOConfig):
     # NEW: Custom output directory for model checkpoints
     output_dir: str = None  # If None, defaults to PPO_CKPTS_DIR
 
-    # NEW: Flag to resume from existing checkpoint
     resume_from_checkpoint: bool = False
+
+    # different reward for the reverse direction
+    reward: str = "cr"
 
     # Will be set in main() - stores the full experiment directory path
     exp_dir: str = field(default=None, init=False)
@@ -815,7 +818,7 @@ def eval(model, tokenizer, config, trainer, ckpt_dir, final=False):
     return all_results
 
 
-def compute_rewards(
+def compute_rewards1(
     utterances,
     utt_lengths,
     utts_contain_eos,
@@ -849,6 +852,67 @@ def compute_rewards(
     ]
 
     # rejection sampling: replace reward with -1 if produced sample does not contain EOS token
+    rewards = [
+        r if contains_eos else torch.tensor(-1.0) for r, contains_eos in zip(rewards, utts_contain_eos, strict=False)
+    ]
+
+    # length reward
+    if length_reward_coef is not None:
+        rewards = [
+            r + length_reward_coef * length if r > 0.5 else r for r, length in zip(rewards, utt_lengths, strict=False)
+        ]
+
+    return rewards
+
+
+def compute_rewards(
+    utterances,
+    utt_lengths,
+    utts_contain_eos,
+    value_model,
+    value_model_tokenizer,
+    output_min_length,
+    output_max_length,
+    score_clip,
+    length_reward_coef,
+    reward: str = "cr",
+    reverse=False,  # TODO: integrate the results in the future eversion
+):
+    if value_model is None:
+        rewards = [torch.tensor(1.0) for _ in range(len(utterances))]
+    else:
+        texts_encoded = value_model_tokenizer(
+            utterances,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=output_max_length + 10,
+        )
+        with torch.no_grad():
+            value_model_outputs = value_model(**texts_encoded)
+
+        rewards = value_model_outputs.logits.squeeze()
+        rewards = torch.sigmoid(rewards)
+        rewards = [torch.tensor(r.item()) for r in rewards]
+
+    # reverse rewards if requested
+    # if reverse:
+    if reward.endswith("reverse"):
+        print("#################################")
+        print("##################Reversing rewards")
+        rewards = [-r for r in rewards]
+
+    # score clipping (before addition of length reward and rejection sampling!)
+    if score_clip is not None:
+        rewards = [torch.clip(reward, -score_clip, score_clip) for reward in rewards]
+
+    # rejection sampling: too short
+    rewards = [
+        r if length >= output_min_length else torch.tensor(-1.0)
+        for r, length in zip(rewards, utt_lengths, strict=False)
+    ]
+
+    # rejection sampling: no EOS
     rewards = [
         r if contains_eos else torch.tensor(-1.0) for r, contains_eos in zip(rewards, utts_contain_eos, strict=False)
     ]
@@ -1095,6 +1159,8 @@ def main():
             batch, response_tensors, query_tensors = generate(batch, query_length_sampler, use_queries)
             utterance_lengths = [len(resp) - 1 for resp in response_tensors]
             utts_contain_eos = [tokenizer.eos_token_id in resp for resp in response_tensors]
+            # TODO: integrate the reward reverse logic in the config and remove the hardcoding here
+            # reverse = True if config.reward in reverse_lst else False
             rewards = compute_rewards(
                 batch["utterance"],
                 utterance_lengths,
@@ -1105,6 +1171,7 @@ def main():
                 config.output_max_length,
                 config.score_clip,
                 config.length_reward_coef,
+                reward=config.reward,
             )
 
             stats = ppo_trainer.step(

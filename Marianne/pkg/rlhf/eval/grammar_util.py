@@ -5,9 +5,9 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
+from grammaticality_annotation.fine_tune_grammaticality_nn import CHILDESGrammarModel
 from transformers import AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer
 
-from grammaticality_annotation.fine_tune_grammaticality_nn import CHILDESGrammarModel
 from pkg.rlhf.utilities import DEFAULT_MAX_GENERATION_LEN, DEFAULT_MIN_GENERATION_LEN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -63,6 +63,24 @@ def compute_scores_gec(
         ]
     ).astype(int)
     return scores
+
+
+def generate(model, tokenizer, batch_size, output_max_length):
+    batch = dict()
+    generation_kwargs = {
+        "min_length": -1,
+        "max_new_tokens": output_max_length,
+        "do_sample": True,
+        "pad_token_id": tokenizer.pad_token_id,
+        "eos_token_id": tokenizer.eos_token_id,
+    }
+    bos_tensor = torch.full((batch_size, 1), tokenizer.bos_token_id, device=device)
+
+    with torch.no_grad():
+        batch["utts"] = model.generate(bos_tensor, **generation_kwargs)
+    batch["utts_decoded"] = [tokenizer.decode(r.squeeze(), skip_special_tokens=True) for r in batch["utts"]]
+
+    return batch
 
 
 def compute_scores(

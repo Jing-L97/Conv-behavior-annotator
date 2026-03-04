@@ -346,35 +346,53 @@ class FeatureExtractor:
 
         return embeddings
 
-    def extract_doc(self, sentences: list, features: list) -> list:
+    def extract_doc(self, sentences: list, features: list, return_dep_graphs: bool = True):
         """Compute docs from a list of sentences; to be used for sentence vector and lemma vector
 
         Parameters
         ----------
         - sentences: a list of texts
         - features: a list of features
+        - return_dep_graphs: whether to return dependency graphs (keeps backward compatibility)
+
+        Returns
+        -------
+        - (docs, lemmas, dep_graphs) if return_dep_graphs else (docs, lemmas)
+          Lists are aligned with input `sentences` indices.
 
         """
-        docs = []
-        lemmas = []
-        dep_graphs = []
+        # Pre-allocate aligned outputs (same length as input)
+        n = len(sentences)
+        docs = [np.nan] * n
+        lemmas = [np.nan] * n
+        dep_graphs = ([np.nan] * n) if return_dep_graphs else None
 
-        if any(f in features for f in self.doc_fea):
-            for sent in sentences:
-                if pd.isna(sent) or len(str(sent)) == 0:
-                    docs.append(np.nan)
-                    lemmas.append(np.nan)
-                    dep_graphs.append(np.nan)
-                else:
-                    doc = self.nlp(sent)
-                    docs.append(doc)
-                    if any(f in features for f in ["func_den_new", "lemma_div", "lemma_align", "lemma_repe"]):
-                        lemma = self.lemma_vector.lemmatize_text(doc)
-                        lemmas.append(lemma)
-                    if any(f in features for f in ["dep_align", "dep_div", "dep_repe"]):
-                        dep_graph = self.wl_sim.dependency_tree_to_graph(doc)
-                        dep_graphs.append(dep_graph)
-        return docs, lemmas, dep_graphs
+        # If no doc-level features are requested, keep cheap defaults
+        if not any(f in features for f in self.doc_fea):
+            return (docs, lemmas, dep_graphs) if return_dep_graphs else (docs, lemmas)
+
+        need_lemmas = any(f in features for f in ["func_den_new", "lemma_div", "lemma_align", "lemma_repe"])
+        need_dep_graphs = return_dep_graphs and any(f in features for f in ["dep_align", "dep_repe"])
+
+        # Build list of valid (index, text) to preserve alignment
+        valid = [(i, sent) for i, sent in enumerate(sentences) if not pd.isna(sent) and len(str(sent)) > 0]
+        if not valid:
+            return (docs, lemmas, dep_graphs) if return_dep_graphs else (docs, lemmas)
+
+        idxs, texts = zip(*valid, strict=False)
+
+        # Batch parse with spaCy
+        # Tune batch_size if needed (64/128/256). Start with 128.
+        for i, doc in zip(idxs, self.nlp.pipe(texts, batch_size=128), strict=False):
+            docs[i] = doc
+
+            if need_lemmas:
+                lemmas[i] = self.lemma_vector.lemmatize_text(doc)
+
+            if need_dep_graphs:
+                dep_graphs[i] = self.wl_sim.dependency_tree_to_graph(doc)
+
+        return (docs, lemmas, dep_graphs) if return_dep_graphs else (docs, lemmas)
 
 
 ##################################

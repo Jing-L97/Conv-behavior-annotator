@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=ppo_align
+#SBATCH --job-name=ppo_val
 #SBATCH --export=ALL
 #SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/ppo_add_%A_%a.log
-#SBATCH --array=0-1
+#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/val_%A_%a.log
+#SBATCH --array=0-11
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -23,7 +23,7 @@ REWARDS=("is_acknowledgement" "align_lexical_unigram" "align_lexical_bigram" "al
 REWARD=${REWARDS[$SLURM_ARRAY_TASK_ID]}
 
 # Run the script with the appropriate configuration
-python -u $SCRIPT_ROOT/train_ppo.py \
+python -u $SCRIPT_ROOT/train/train_ppo.py \
     --policy_model $MODEL_ROOT/lm/lightning_logs/he3nnzld/ckpt_huggingface_best/ \
     --value_model $MODEL_ROOT/reward/$REWARD \
     --steps 6000 \
