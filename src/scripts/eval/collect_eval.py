@@ -97,6 +97,6 @@ for sub_dir in model_root.iterdir():
 
 
 results_df.to_csv(
-    settings.PATH.result_dir / f"{model_config}.csv",
+    settings.PATH.result_dir / "ppo" / f"{model_config}.csv",
     index=False,
 )

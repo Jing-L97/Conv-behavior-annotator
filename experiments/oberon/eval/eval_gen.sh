@@ -18,11 +18,11 @@ OUT_ROOT=$ROOT/"results"
 EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
 
 # Define column names as an array
-REWARDS=("cr_reverse" "is_acknowledgement" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" "sent_engagement" "sent_negativity" "sent_reverse_negativity" "sent_supportiveness" "sent_warmth" "sent_approval" "sent_caring" "sent_curiosity")
-
+REWARDS=("cr_reverse" "is_acknowledgement" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" "sent_engagement" "sent_negativity" "sent_negativity_reverse" "sent_supportiveness" "sent_warmth" "sent_approval" "sent_caring" "sent_curiosity")
 
 # Get the column name for this array task
 REWARD=${REWARDS[$SLURM_ARRAY_TASK_ID]}
+
 PPO_MODEL=$MODEL_ROOT/ppo/$EXP/${REWARD}_$EXP/best_reward
 OUTPUT_DIR=$ROOT/results/ppo/$EXP/${REWARD}_$EXP
 
