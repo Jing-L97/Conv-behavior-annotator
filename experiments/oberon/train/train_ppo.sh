@@ -6,8 +6,8 @@
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/val_%A_%a.log
-#SBATCH --array=0-11
+#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/new_%A_%a.log
+#SBATCH --array=0-4
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -17,8 +17,7 @@ DATA_ROOT=$ROOT/"datasets"
 EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
 
 # Define column names as an array
-REWARDS=("is_acknowledgement" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" "sent_engagement" "sent_negativity" "sent_supportiveness" "sent_warmth" "sent_approval" "sent_caring" "sent_curiosity")
-
+REWARDS=("is_cr" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic")
 # Get the column name for this array task
 REWARD=${REWARDS[$SLURM_ARRAY_TASK_ID]}
 

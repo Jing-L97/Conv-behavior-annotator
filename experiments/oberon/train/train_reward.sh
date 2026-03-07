@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=train_reward
 #SBATCH --export=ALL
-#SBATCH --partition=gpu-p1
+#SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=18:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/rlhf/reward_%A_%a.log
+#SBATCH --output=/scratch2/jliu/Feedback/logs/train/reward_%A_%a.log
 #SBATCH --array=0-3
 
 # Script and config paths
@@ -16,8 +16,7 @@ MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
 
 # Define column names as an array
-COL_NAMES=("cr" "sent_negativity" "sent_supportiveness" "sent_warmth")
-
+COL_NAMES=("align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic")
 # Get the column name for this array task
 COL_NAME=${COL_NAMES[$SLURM_ARRAY_TASK_ID]}
 

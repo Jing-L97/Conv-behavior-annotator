@@ -27,6 +27,7 @@ from transformers.trainer_pt_utils import nested_detach
 from trl import ModelConfig, RewardConfig, RewardTrainer, get_kbit_device_map, get_peft_config, get_quantization_config
 from trl.trainer.utils import print_rich_table
 
+from pkg.rlhf.data import compute_reward_value
 from pkg.rlhf.utilities import CONVERSATIONS_DATA_FILE
 from pkg.settings import get_torch_device
 
@@ -262,6 +263,7 @@ def build_reward_model_trainer_datasets(fb_data_paths, reward_column_name="rewar
         data["transcript_clean"] = data["utt_transcript_clean"]
         data = data[["transcript_clean", reward_column_name]]
         data.rename(columns={reward_column_name: "reward"}, inplace=True)
+        data["reward"] = data["reward"].apply(lambda x: compute_reward_value(x, reward_column_name))
         all_data.append(data)
 
     all_data = pd.concat(all_data, ignore_index=True)
