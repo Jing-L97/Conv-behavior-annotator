@@ -1,33 +1,40 @@
 #!/bin/bash
-#SBATCH --job-name=ppo_val
+#SBATCH --job-name=annotate_all
 #SBATCH --export=ALL
-#SBATCH --partition=erc-dupoux
+#SBATCH --partition=gpu-p1
 #SBATCH --gres=gpu:1
-#SBATCH --mem=80G
+#SBATCH --mem=120G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/check_%A_%a.log
-#SBATCH --array=0-4
+#SBATCH --output=/scratch2/jliu/Feedback/logs/annot/annotate.log
+
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
 SCRIPT_ROOT=$ROOT/"Conv-behavior-annotator/src/scripts"
 MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
+
+
 EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
+SEED=123
+COL_NAME="is_cr"
 
-# Define column names as an array
-REWARDS=("is_cr" "is_acknowledgement" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" )
-# Get the column name for this array task
-REWARD=${REWARDS[$SLURM_ARRAY_TASK_ID]}
+# Step 1: Run the script with the appropriate configuration
+python $SCRIPT_ROOT/train/train_reward.py \
+    --data_path $DATA_ROOT/annotated/conversations_min_age_10.csv \
+    --model_name_or_path microsoft/deberta-v3-xsmall \
+    --output_dir $MODEL_ROOT/reward/$SEED/$COL_NAME \
+    --reward_column_name $COL_NAME \
+    --wandb_dir $ROOT \
+    --skip_existing \
+    --seed $SEED
 
-SEEDS=(123 999 1024)
-SEED=${SEEDS[$SLURM_ARRAY_TASK_ID]}
 
-# Run the script with the appropriate configuration
+# Step 2: Run the script with the appropriate configuration
 python -u $SCRIPT_ROOT/train/train_ppo.py \
     --policy_model $MODEL_ROOT/lm/lightning_logs/he3nnzld/ckpt_huggingface_best/ \
-    --value_model $MODEL_ROOT/reward/$SEED/$REWARD \
+    --value_model $MODEL_ROOT/reward/$SEED/$COL_NAME \
     --steps 6000 \
     --target 6 \
     --lm_data_path $DATA_ROOT/raw/caregiver_utterances_train_1000000.0_words.txt \
@@ -36,10 +43,8 @@ python -u $SCRIPT_ROOT/train/train_ppo.py \
     --entropy_reg_coef 0.001 \
     --length_reward_coef 0 \
     --lm_loss_coef 0.001 \
-    --exp_name $REWARD"_"$EXP \
+    --exp_name $COL_NAME"_"$EXP \
     --eval_data_dir $DATA_ROOT \
-    --output_dir $MODEL_ROOT/ppo/$REWARD_$EXP \
+    --output_dir $MODEL_ROOT/ppo/$SEED/$COL_NAME_$EXP \
     --wandb_dir $ROOT \
     --seed $SEED
-
-
