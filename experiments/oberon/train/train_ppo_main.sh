@@ -17,14 +17,17 @@ DATA_ROOT=$ROOT/"datasets"
 EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
 
 # Define column names as an array
-REWARDS=("is_cr" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic")
+REWARDS=("is_cr" "is_acknowledgement" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" )
 # Get the column name for this array task
 REWARD=${REWARDS[$SLURM_ARRAY_TASK_ID]}
+
+SEEDS=(123 999 1024)
+SEED=${SEEDS[$SLURM_ARRAY_TASK_ID]}
 
 # Run the script with the appropriate configuration
 python -u $SCRIPT_ROOT/train/train_ppo.py \
     --policy_model $MODEL_ROOT/lm/lightning_logs/he3nnzld/ckpt_huggingface_best/ \
-    --value_model $MODEL_ROOT/reward/$REWARD \
+    --value_model $MODEL_ROOT/reward/$SEED/$REWARD \
     --steps 6000 \
     --target 6 \
     --lm_data_path $DATA_ROOT/raw/caregiver_utterances_train_1000000.0_words.txt \
@@ -37,6 +40,6 @@ python -u $SCRIPT_ROOT/train/train_ppo.py \
     --eval_data_dir $DATA_ROOT \
     --output_dir $MODEL_ROOT/ppo/$REWARD_$EXP \
     --wandb_dir $ROOT \
-    --seed 3
+    --seed $SEED
 
 
