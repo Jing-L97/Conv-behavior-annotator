@@ -233,7 +233,7 @@ class CFRewardTrainer(RewardTrainer):
         return loss
 
 
-def build_reward_model_trainer_datasets(fb_data_paths, reward_column_name="reward"):
+def build_reward_model_trainer_datasets(fb_data_paths, apply_binary, reward_column_name="reward"):
     all_data = []
     for fb_data_path in fb_data_paths:
         if Path(fb_data_path).is_file():
@@ -263,7 +263,9 @@ def build_reward_model_trainer_datasets(fb_data_paths, reward_column_name="rewar
         data["transcript_clean"] = data["utt_transcript_clean"]
         data = data[["transcript_clean", reward_column_name]]
         data.rename(columns={reward_column_name: "reward"}, inplace=True)
-        data["reward"] = data["reward"].apply(lambda x: compute_reward_value(x, reward_column_name))
+        data["reward"] = data["reward"].apply(
+            lambda x: compute_reward_value(x, reward_column_name, apply_binary=apply_binary)
+        )
         all_data.append(data)
 
     all_data = pd.concat(all_data, ignore_index=True)
@@ -307,6 +309,8 @@ class CFRewardTrainerConfig(RewardConfig):
     resume_from_checkpoint: bool = field(
         default=False, metadata={"help": "Whether to resume training from the latest checkpoint in output_dir"}
     )
+    skip_existing: bool = field(default=False, metadata={"help": "Whether to skip the existing trained model"})
+    apply_binary: bool = field(default=False, metadata={"help": "Whether to apply binary values "})
     checkpoint_path: str = field(
         default=None,
         metadata={
@@ -351,6 +355,9 @@ def main():
 
     # Ensure output directory exists
     output_path = Path(trainer_config.output_dir)
+    if output_path.exists() and trainer_config.skip_existing:
+        print(f"WARNING: Output directory already exists: {output_path}")
+        exit(1)
     output_path.mkdir(parents=True, exist_ok=True)
 
     # Setup WandB directory - save in parent folder of output_dir
@@ -454,6 +461,7 @@ def main():
 
     raw_datasets = build_reward_model_trainer_datasets(
         trainer_config.data_paths,
+        apply_binary=trainer_config.apply_binary,
         reward_column_name=trainer_config.reward_column_name,
     )
 

@@ -669,7 +669,7 @@ class BabyLMDataset(Dataset):
         return out
 
 
-def compute_reward_value(reward: int, reward_type: str) -> int | float:
+def compute_reward_value(reward: int, reward_type: str, apply_binary: bool = False) -> int | float:
     if reward_type == "is_cr":
         return 1 - int(reward)
     if reward_type == "is_acknowledgement":
@@ -677,8 +677,10 @@ def compute_reward_value(reward: int, reward_type: str) -> int | float:
     # map to values 0, 0.5, 1; where we train topline
     if reward_type == "is_grammatical":
         return (reward + 1) / 2
-    if reward_type.startswith("align"):
+    if reward_type.startswith("align") and apply_binary:
         return int(reward > 0)
+    if reward_type.startswith("align") and not apply_binary:
+        return reward
     if reward_type.startswith("sent"):
         return reward
     raise RuntimeError("Unrecgognized reward type: " + reward_type)
