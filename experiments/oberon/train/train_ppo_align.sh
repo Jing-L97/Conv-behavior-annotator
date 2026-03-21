@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=24:00:00
+#SBATCH --time=10:00:00
 #SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/align_%A_%a.log
 #SBATCH --array=0-29
 
@@ -59,6 +59,7 @@ python -u $SCRIPT_ROOT/train/train_ppo.py \
     --eval_data_dir $DATA_ROOT \
     --output_dir $MODEL_ROOT/ppo/$SEED/$REWARD_$EXP \
     --wandb_dir $ROOT \
+    --skip_existing \
     --seed $SEED
 
 

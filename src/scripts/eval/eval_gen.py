@@ -4,6 +4,7 @@ import math
 import os
 import time
 from collections import Counter, defaultdict
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -529,6 +530,11 @@ def eval_models(args):
             utts_csv_base, utts_csv_ext = os.path.splitext(args.output_utts_csv)
             output_utts_csv = f"{utts_csv_base}_{model_basename}{utts_csv_ext}"
 
+        # skip if there is already one
+        if Path(output_utts_csv).exists() and args.skip_existing:
+            print(f"WARNING: Output csv already exists: {output_utts_csv}")
+            exit(1)
+
         try:
             model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
             tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -640,6 +646,7 @@ def get_args():
 
     p.add_argument("--output_csv", type=str, default="results.csv")
     p.add_argument("--baseline", action="store_true", help="If set, do not modify output filenames or directories.")
+    p.add_argument("--skip_existing", action="store_true", help="If set, skip_existing generations.")
     return p.parse_args()
 
 

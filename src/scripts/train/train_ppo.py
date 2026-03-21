@@ -8,6 +8,7 @@ import time
 import typing
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -732,6 +733,8 @@ class CfPPOConfig(PPOConfig):
     # Will be set in main() - stores the full experiment directory path
     exp_dir: str = field(default=None, init=False)
 
+    skip_existing: bool = field(default=False, metadata={"help": "Whether to skip the existing trained model"})
+
 
 def eval_lm_loss(model, tokenizer, config, trainer, lm_val_dataloader, max_batches=100):
     print("Evaluating LM loss")
@@ -971,7 +974,10 @@ def main():
     config.exp_dir = os.path.join(base_ckpt_dir, config.exp_name)
 
     # Create necessary directories
-    os.makedirs(config.exp_dir, exist_ok=True)
+    if Path(config.exp_dir).exists() and config.skip_existing:
+        print(f"WARNING: Output directory already exists: {config.exp_dir}")
+        exit(1)
+    Path(config.exp_dir).mkdir(parents=True, exist_ok=True)
 
     # Set evaluation data directory if provided
     if config.eval_data_dir is not None:
