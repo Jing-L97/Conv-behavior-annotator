@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=eval_gen
+#SBATCH --job-name=ppo_align_sem
 #SBATCH --export=ALL
-#SBATCH --partition=gpu-p1
+#SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=4:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_gen_%A_%a.log
+#SBATCH --time=10:00:00
+#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/align_sem_%a.log
 #SBATCH --array=0-2
 
 # Script and config paths
@@ -14,11 +14,9 @@ ROOT="/scratch2/jliu/Feedback"
 SCRIPT_ROOT=$ROOT/"Conv-behavior-annotator/src/scripts"
 MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
-OUT_ROOT=$ROOT/"results"
 EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
 
 # Define column names as an array
-#REWARDS=("is_cr" "is_acknowledgement" "continuous_align_lexical_unigram" "continuous_align_lexical_bigram" "continuous_align_syntactic" "continuous_align_semantic" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" "sent_engagement" "sent_negativity" "sent_supportiveness" "sent_warmth" "sent_approval" "sent_caring" "sent_curiosity")
 REWARDS=("continuous_align_semantic")
 SEEDS=(123 999 1024)
 
@@ -44,17 +42,22 @@ echo "  Reward : $REWARD"
 echo "  Seed   : $SEED"
 
 
-PPO_MODEL=$MODEL_ROOT/ppo/$SEED/$EXP/${REWARD}_$EXP/best_reward
-OUTPUT_DIR=$ROOT/results/ppo/$EXP/$SEED/${REWARD}_$EXP
+# Run the script with the appropriate configuration
+python -u $SCRIPT_ROOT/train/train_ppo.py \
+    --policy_model $MODEL_ROOT/lm/lightning_logs/he3nnzld/ckpt_huggingface_best/ \
+    --value_model $MODEL_ROOT/reward/$SEED/$REWARD \
+    --steps 6000 \
+    --target 6 \
+    --lm_data_path $DATA_ROOT/raw/caregiver_utterances_train_1000000.0_words.txt \
+    --lm_val_data_path $DATA_ROOT/raw/caregiver_utterances_val_1000000.0_words.txt \
+    --grammar_eval_model_path $MODEL_ROOT/grammar_eval/version_19 \
+    --entropy_reg_coef 0.001 \
+    --length_reward_coef 0 \
+    --lm_loss_coef 0.001 \
+    --exp_name $REWARD"_"$EXP \
+    --eval_data_dir $DATA_ROOT \
+    --output_dir $MODEL_ROOT/ppo/$SEED/$REWARD_$EXP \
+    --wandb_dir $ROOT \
+    --seed $SEED
 
-
-python -u $SCRIPT_ROOT/eval/eval_gen.py \
-    --model_paths $PPO_MODEL \
-    --eval_model_path $MODEL_ROOT/grammar_eval/version_19 \
-    --word_info_path $DATA_ROOT/evaluation_data/gen/word_info.csv \
-    --func_info_path $DATA_ROOT/evaluation_data/gen/func_info.csv \
-    --output_utts_csv $OUTPUT_DIR/utt.csv \
-    --output_csv $OUTPUT_DIR/result.csv \
-    --batch_size 50 \
-    --num_batches 200 
 

@@ -6,8 +6,8 @@
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=4:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_gen_%A_%a.log
-#SBATCH --array=0-2
+#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_999_%A_%a.log
+#SBATCH --array=0-15
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -18,9 +18,8 @@ OUT_ROOT=$ROOT/"results"
 EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
 
 # Define column names as an array
-#REWARDS=("is_cr" "is_acknowledgement" "continuous_align_lexical_unigram" "continuous_align_lexical_bigram" "continuous_align_syntactic" "continuous_align_semantic" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" "sent_engagement" "sent_negativity" "sent_supportiveness" "sent_warmth" "sent_approval" "sent_caring" "sent_curiosity")
-REWARDS=("continuous_align_semantic")
-SEEDS=(123 999 1024)
+REWARDS=("is_cr" "is_acknowledgement" "continuous_align_lexical_unigram" "continuous_align_lexical_bigram" "continuous_align_syntactic" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" "sent_engagement" "sent_negativity" "sent_supportiveness" "sent_warmth" "sent_approval" "sent_caring" "sent_curiosity")
+SEEDS=(999)
 
 
 # Calculate total combinations for validation
