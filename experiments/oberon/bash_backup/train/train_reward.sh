@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=reward_sent
+#SBATCH --job-name=reward_main
 #SBATCH --export=ALL
-#SBATCH --partition=gpu-p1
+#SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=18:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/reward/sent_%A_%a.log
-#SBATCH --array=0-23
+#SBATCH --output=/scratch2/jliu/Feedback/logs/reward/main_%A_%a.log
+#SBATCH --array=0-71
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -15,12 +15,36 @@ SCRIPT_ROOT=$ROOT/"Conv-behavior-annotator/src/scripts"
 MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
 
-# Define column names as an array
-COL_NAMES=("sent_engagement" "sent_negativity" "sent_negativity_reverse" "sent_supportiveness" "sent_warmth" "sent_approval" "sent_caring" "sent_curiosity")
-# Get the column name for this array task
-COL_NAME=${COL_NAMES[$SLURM_ARRAY_TASK_ID]}
+# Define parameter arrays
+COL_NAMES=(
+    "is_cr"
+    "is_acknowledgement"
+    "align_lexical_unigram"
+    "align_lexical_bigram"
+    "align_syntactic"
+    "align_semantic"
+    "continuous_align_lexical_unigram" 
+    "continuous_align_lexical_bigram" 
+    "continuous_align_syntactic" 
+    "continuous_align_semantic"
+    "sent_engagement" 
+    "sent_negativity" 
+    "sent_negativity_reverse" 
+    "sent_supportiveness" 
+    "sent_warmth" 
+    "sent_approval" 
+    "sent_caring" 
+    "sent_curiosity"
+)
+    
 
-SEEDS=(123 999 1024)
+
+SEEDS=(
+    3
+    123
+    999
+    1024
+)
 
 # Calculate total combinations for validation
 TOTAL_COMBINATIONS=$(( ${#COL_NAMES[@]} * ${#SEEDS[@]} ))

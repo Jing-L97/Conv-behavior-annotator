@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=eval_gen
+#SBATCH --job-name=eval_gen_1e5_align
 #SBATCH --export=ALL
 #SBATCH --partition=gpu-p1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=4:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_gen_%A_%a.log
-#SBATCH --array=0-2
+#SBATCH --time=12:00:00
+#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_gen_1e5_seed_align_%A_%a.log
+#SBATCH --array=0-29
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -15,12 +15,24 @@ SCRIPT_ROOT=$ROOT/"Conv-behavior-annotator/src/scripts"
 MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
 OUT_ROOT=$ROOT/"results"
-EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
+EXP="1e5_reward_seed_3_entropy_001_lm_loss_001_target_6"
 
 # Define column names as an array
-#REWARDS=("is_cr" "is_acknowledgement" "continuous_align_lexical_unigram" "continuous_align_lexical_bigram" "continuous_align_syntactic" "continuous_align_semantic" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" "sent_engagement" "sent_negativity" "sent_supportiveness" "sent_warmth" "sent_approval" "sent_caring" "sent_curiosity")
-REWARDS=("continuous_align_semantic")
+REWARDS=(
+    "is_cr"
+    "is_acknowledgement"
+    "align_lexical_unigram"
+    "align_lexical_bigram"
+    "align_syntactic"
+    "align_semantic"
+    "continuous_align_lexical_unigram" 
+    "continuous_align_lexical_bigram" 
+    "continuous_align_syntactic" 
+    "continuous_align_semantic"
+)
 SEEDS=(123 999 1024)
+
+#SEEDS=(3)
 
 
 # Calculate total combinations for validation
@@ -44,7 +56,7 @@ echo "  Reward : $REWARD"
 echo "  Seed   : $SEED"
 
 
-PPO_MODEL=$MODEL_ROOT/ppo/$SEED/$EXP/${REWARD}_$EXP/best_reward
+PPO_MODEL=$MODEL_ROOT/ppo/$EXP/$SEED/${REWARD}_$EXP/best_reward
 OUTPUT_DIR=$ROOT/results/ppo/$EXP/$SEED/${REWARD}_$EXP
 
 

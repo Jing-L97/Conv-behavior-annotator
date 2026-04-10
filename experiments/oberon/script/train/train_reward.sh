@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=18:00:00
 #SBATCH --output=/scratch2/jliu/Feedback/logs/reward/main_%A_%a.log
-#SBATCH --array=0-17
+#SBATCH --array=0-71
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -23,9 +23,24 @@ COL_NAMES=(
     "align_lexical_bigram"
     "align_syntactic"
     "align_semantic"
+    "continuous_align_lexical_unigram" 
+    "continuous_align_lexical_bigram" 
+    "continuous_align_syntactic" 
+    "continuous_align_semantic"
+    "sent_engagement" 
+    "sent_negativity" 
+    "sent_negativity_reverse" 
+    "sent_supportiveness" 
+    "sent_warmth" 
+    "sent_approval" 
+    "sent_caring" 
+    "sent_curiosity"
 )
+    
+
 
 SEEDS=(
+    3
     123
     999
     1024

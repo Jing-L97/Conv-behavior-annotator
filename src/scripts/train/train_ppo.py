@@ -974,7 +974,7 @@ def main():
     config.exp_dir = os.path.join(base_ckpt_dir, config.exp_name)
 
     # Create necessary directories
-    if Path(config.exp_dir).exists() and config.skip_existing:
+    if (Path(config.exp_dir) / "sample_utts.csv").exists() and config.skip_existing:
         print(f"WARNING: Output directory already exists: {config.exp_dir}")
         exit(1)
     Path(config.exp_dir).mkdir(parents=True, exist_ok=True)

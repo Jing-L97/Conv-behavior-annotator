@@ -1,25 +1,35 @@
 #!/bin/bash
-#SBATCH --job-name=ppo_align
+#SBATCH --job-name=ppo_sent_1e7_seed
 #SBATCH --export=ALL
 #SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=10:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/align_%A_%a.log
-#SBATCH --array=0-29
+#SBATCH --time=48:00:00
+#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/sent_1e7_seed_%A_%a.log
+#SBATCH --array=0-23
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
 SCRIPT_ROOT=$ROOT/"Conv-behavior-annotator/src/scripts"
 MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
-EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
+EXP="1e7_reward_seed_3_entropy_001_lm_loss_001_target_6"
+LM="uu5rtja8"
 
 # Define column names as an array
-REWARDS=("is_cr" "is_acknowledgement" "align_lexical_unigram" "align_lexical_bigram" "align_syntactic" "align_semantic" "continuous_align_lexical_unigram" "continuous_align_lexical_bigram" "continuous_align_syntactic" "continuous_align_semantic")
+REWARDS=(
+    "sent_engagement" 
+    "sent_negativity" 
+    "sent_negativity_reverse" 
+    "sent_supportiveness" 
+    "sent_warmth" 
+    "sent_approval" 
+    "sent_caring" 
+    "sent_curiosity"
+    )
 SEEDS=(123 999 1024)
-
+#SEEDS=(3)
 
 # Calculate total combinations for validation
 TOTAL_COMBINATIONS=$(( ${#REWARDS[@]} * ${#SEEDS[@]} ))
@@ -42,10 +52,9 @@ echo "  Reward : $REWARD"
 echo "  Seed   : $SEED"
 
 
-
 # Run the script with the appropriate configuration
 python -u $SCRIPT_ROOT/train/train_ppo.py \
-    --policy_model $MODEL_ROOT/lm/lightning_logs/he3nnzld/ckpt_huggingface_best/ \
+    --policy_model $MODEL_ROOT/lm/lightning_logs/$LM/ckpt_huggingface_best/ \
     --value_model $MODEL_ROOT/reward/$SEED/$REWARD \
     --steps 6000 \
     --target 6 \
@@ -57,7 +66,7 @@ python -u $SCRIPT_ROOT/train/train_ppo.py \
     --lm_loss_coef 0.001 \
     --exp_name $REWARD"_"$EXP \
     --eval_data_dir $DATA_ROOT \
-    --output_dir $MODEL_ROOT/ppo/$SEED/$REWARD_$EXP \
+    --output_dir $MODEL_ROOT/ppo/$REWARD_$EXP/$SEED \
     --wandb_dir $ROOT \
     --skip_existing \
     --seed $SEED
