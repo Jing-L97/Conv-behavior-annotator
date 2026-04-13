@@ -1,34 +1,51 @@
 #!/bin/bash
-#SBATCH --job-name=eval_gen
+#SBATCH --job-name=eval_gen_topline
 #SBATCH --export=ALL
 #SBATCH --partition=gpu-p1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=2:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_gen_topline.log
+#SBATCH --time=12:00:00
+#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/topline_%A_%a.log
+#SBATCH --array=0-11
 
-# Script and config paths
+
+# ── core experiment properties ────────────────────────────────────────────────
+DATA_SIZES=("1e5"      "1e6"      "1e7")
+LMS=(       "967ufsfk" "he3nnzld" "uu5rtja8")
+
+
+REWARDS=(
+    "topline"
+)
+SEEDS=(3 123 999 1024)
+# ── paths ─────────────────────────────────────────────────────────────────────
 ROOT="/scratch2/jliu/Feedback"
-SCRIPT_ROOT=$ROOT/"Conv-behavior-annotator/src/scripts"
-MODEL_ROOT=$ROOT/"models"
-DATA_ROOT=$ROOT/"datasets"
-OUT_ROOT=$ROOT/"results"
-EXP="1e6_reward_seed_3_entropy_001_lm_loss_001_target_6"
-
-# Get the column name for this array task
-REWARD="topline"
-
-PPO_MODEL=$MODEL_ROOT/ppo/$EXP/${REWARD}_$EXP/best_reward
-OUTPUT_DIR=$ROOT/results/ppo/$EXP/${REWARD}_$EXP
-
-python -u $SCRIPT_ROOT/eval/eval_gen.py \
-    --model_paths $PPO_MODEL \
-    --eval_model_path $MODEL_ROOT/grammar_eval/version_19 \
-    --word_info_path $DATA_ROOT/evaluation_data/gen/word_info.csv \
-    --func_info_path $DATA_ROOT/evaluation_data/gen/func_info.csv \
-    --output_utts_csv $OUTPUT_DIR/utt.csv \
-    --output_csv $OUTPUT_DIR/result.csv \
-    --batch_size 50 \
-    --num_batches 10
-
+WORKSPACE=$ROOT/"Conv-behavior-annotator/experiments/oberon/script/eval"
+cd $WORKSPACE
+# ── array index validation ────────────────────────────────────────────────────
+TOTAL_COMBINATIONS=$(( ${#DATA_SIZES[@]} * ${#REWARDS[@]} * ${#SEEDS[@]} ))
+if [[ $SLURM_ARRAY_TASK_ID -ge $TOTAL_COMBINATIONS ]]; then
+    echo "Error: SLURM_ARRAY_TASK_ID ($SLURM_ARRAY_TASK_ID) exceeds total combinations ($TOTAL_COMBINATIONS)"
+    exit 1
+fi
+# ── index resolution ──────────────────────────────────────────────────────────
+# Layout: DATA_SIZE (outer) → REWARD (middle) → SEED (inner)
+DATA_IDX=$(( SLURM_ARRAY_TASK_ID / (${#REWARDS[@]} * ${#SEEDS[@]}) ))
+REWARD_IDX=$(( (SLURM_ARRAY_TASK_ID / ${#SEEDS[@]}) % ${#REWARDS[@]} ))
+SEED_IDX=$(( SLURM_ARRAY_TASK_ID % ${#SEEDS[@]} ))
+DATA_SIZE="${DATA_SIZES[$DATA_IDX]}"
+LM="${LMS[$DATA_IDX]}"
+REWARD="${REWARDS[$REWARD_IDX]}"
+SEED="${SEEDS[$SEED_IDX]}"
+EXP="${DATA_SIZE}_reward_seed_3_entropy_001_lm_loss_001_target_6"
+# ── logging ───────────────────────────────────────────────────────────────────
+echo "========================================================"
+echo "Processing combination $SLURM_ARRAY_TASK_ID of $TOTAL_COMBINATIONS"
+echo "  Data size : $DATA_SIZE  (LM: $LM)"
+echo "  Reward    : $REWARD"
+echo "  Seed      : $SEED"
+echo "  EXP tag   : $EXP"
+echo "========================================================"
+# ── launch ────────────────────────────────────────────────────────────────────
+bash ./eval_gen.sh $REWARD $SEED $EXP

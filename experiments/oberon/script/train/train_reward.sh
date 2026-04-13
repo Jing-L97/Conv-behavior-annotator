@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=reward_main
+#SBATCH --job-name=reward2
 #SBATCH --export=ALL
 #SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=18:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/reward/main_%A_%a.log
-#SBATCH --array=0-71
+#SBATCH --output=/scratch2/jliu/Feedback/logs/reward/2_%A_%a.log
+#SBATCH --array=0-17
 
 # Script and config paths
 ROOT="/scratch2/jliu/Feedback"
@@ -28,22 +28,19 @@ COL_NAMES=(
     "continuous_align_syntactic" 
     "continuous_align_semantic"
     "sent_engagement" 
-    "sent_negativity" 
-    "sent_negativity_reverse" 
+    "sent_negativity"  
     "sent_supportiveness" 
     "sent_warmth" 
     "sent_approval" 
     "sent_caring" 
     "sent_curiosity"
+    "topline"
 )
     
 
 
 SEEDS=(
-    3
-    123
-    999
-    1024
+    2
 )
 
 # Calculate total combinations for validation
