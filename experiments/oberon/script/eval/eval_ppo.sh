@@ -3,13 +3,15 @@
 REWARD=$1
 SEED=$2
 EXP=$3
+EXP_SETTING=$4
 # ── paths ─────────────────────────────────────────────────────────────────────
 ROOT="/scratch2/jliu/Feedback"
 SCRIPT_ROOT=$ROOT/"Conv-behavior-annotator/src/scripts"
 MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
-PPO_MODEL=$MODEL_ROOT/ppo/$EXP/$SEED/${REWARD}_$EXP/best_reward
-OUTPUT_DIR=$ROOT/results/ppo/$EXP/$SEED/${REWARD}_$EXP
+PPO_MODEL=$MODEL_ROOT/ppo/$EXP_SETTING/$SEED/${REWARD}_$EXP/best_reward
+OUTPUT_DIR=$ROOT/results/ppo/$EXP_SETTING/$SEED/${REWARD}_$EXP
+
 mkdir -p $OUTPUT_DIR
 python -u $SCRIPT_ROOT/eval/eval_gen.py \
     --model_paths $PPO_MODEL \

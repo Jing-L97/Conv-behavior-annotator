@@ -8,10 +8,17 @@ import pandas as pd
 from pkg import settings
 from pkg.rlhf.eval.collect import collect_babylm_metrics, collect_gen_metrics, extract_reward, extract_scale
 
+# DEFAULT_MODEL_CONFIGS = [
+#     "1e5_reward_seed_3_entropy_001_lm_loss_001_target_6",
+#     "1e6_reward_seed_3_entropy_001_lm_loss_001_target_6",
+#     "1e7_reward_seed_3_entropy_001_lm_loss_001_target_6",
+# ]
+
+
 DEFAULT_MODEL_CONFIGS = [
-    "1e5_reward_seed_3_entropy_001_lm_loss_001_target_6",
-    "1e6_reward_seed_3_entropy_001_lm_loss_001_target_6",
-    "1e7_reward_seed_3_entropy_001_lm_loss_001_target_6",
+    "1e5_entropy_001_lm_loss_001_target_6",
+    "1e6_entropy_001_lm_loss_001_target_6",
+    "1e7_entropy_001_lm_loss_001_target_6",
 ]
 
 DEFAULT_SEEDS = [3, 123, 999, 1024]
@@ -59,16 +66,13 @@ def get_args():
     return p.parse_args()
 
 
-# TODO: collect baseline model results
-
-
 def main():
     args = get_args()
 
     rows = []
     dfs = []
 
-    output_dir = Path(args.output_dir) if args.output_dir else settings.PATH.result_dir / "ppo"
+    output_dir = Path(args.output_dir) if args.output_dir else settings.PATH.result_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # extract baseline
@@ -148,7 +152,7 @@ def main():
     final_df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
     results_df.to_csv(output_dir / "result.csv", index=False)
-    final_df.to_excel(output_dir / "sampled_utt.xlsx", index=False)
+    final_df.to_excel(output_dir / f"sampled_args.target_row_num}.xlsx", index=False)
     print(f"Saved results to {output_dir}/ result.csv")
     print(f"Saved results to {output_dir}/ sampled_{args.target_row_num}.xlsx")
 
