@@ -7,12 +7,12 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=12:00:00
 #SBATCH --output=/scratch2/jliu/Feedback/logs/eval/baseline_%A_%a.log
-#SBATCH --array=0-2
+#SBATCH --array=0-1
 
 
 # ── core experiment properties ────────────────────────────────────────────────
-DATA_SIZES=("1e5" "1e6" "1e7")
-LMS=("967ufsfk" "he3nnzld" "uu5rtja8")
+DATA_SIZES=("1e6")
+LMS=("he3nnzld")
 SEEDS=(3)
 
 ROOT="/scratch2/jliu/Feedback"
@@ -40,3 +40,4 @@ echo "  Seed      : $SEED"
 echo "========================================================"
 
 bash ./eval_baseline.sh "$LM" "$SEED" "$DATA_SIZE"
+bash ./eval_grammar_baseline.sh "$LM" "$SEED" "$DATA_SIZE"

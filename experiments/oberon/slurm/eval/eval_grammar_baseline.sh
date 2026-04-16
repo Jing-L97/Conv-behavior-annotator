@@ -1,38 +1,23 @@
 #!/bin/bash
-#SBATCH --job-name=eval_baseline_2
+#SBATCH --job-name=eval_baseline_1e5
 #SBATCH --export=ALL
 #SBATCH --partition=gpu-p1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=12:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/baseline_2_%A_%a.log
-#SBATCH --array=0-17
+#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/baselin_1e5e_%A_%a.log
+#SBATCH --array=0-1
 
 
 # ── core experiment properties ────────────────────────────────────────────────
-DATA_SIZES=("1e5")
-LMS=("is_cr"
-    "is_acknowledgement"
-    "align_lexical_unigram"
-    "align_lexical_bigram"
-    "align_syntactic"
-    "align_semantic"
-    "continuous_align_lexical_unigram" 
-    "continuous_align_lexical_bigram" 
-    "continuous_align_syntactic" 
-    "continuous_align_semantic"
-    "sent_engagement" 
-    "sent_negativity"  
-    "sent_supportiveness" 
-    "sent_warmth" 
-    "sent_approval" 
-    "sent_caring" 
-    "sent_curiosity"
-    "topline"
-    )
+# DATA_SIZES=("1e5" "1e6" "1e7")
+# LMS=("967ufsfk" "he3nnzld" "uu5rtja8")
 
-SEEDS=(2)
+DATA_SIZES=("1e7")
+LMS=("uu5rtja8")
+
+SEEDS=(3)
 
 ROOT="/scratch2/jliu/Feedback"
 WORKSPACE="$ROOT/Conv-behavior-annotator/experiments/oberon/script/eval"
@@ -58,4 +43,4 @@ echo "  Data size : $DATA_SIZE  (LM: $LM)"
 echo "  Seed      : $SEED"
 echo "========================================================"
 
-bash ./eval_baseline.sh "$LM" "$SEED" "$DATA_SIZE"
+bash ./eval_grammar_baseline.sh "$LM" "$SEED" "$DATA_SIZE"

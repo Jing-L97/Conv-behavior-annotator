@@ -1,42 +1,30 @@
 #!/bin/bash
-#SBATCH --job-name=eval_gen_seed2
+#SBATCH --job-name=1e5_2
 #SBATCH --export=ALL
 #SBATCH --partition=gpu-p1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=12:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/seed2_%A_%a.log
-#SBATCH --array=0-17
+#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/1e5_2.log
+#SBATCH --array=0-
 
 
 # ── core experiment properties ────────────────────────────────────────────────
 DATA_SIZES=("1e5")
 
 REWARDS=(
-    "is_cr"
-    "is_acknowledgement"
     "align_lexical_unigram"
     "align_lexical_bigram"
     "align_syntactic"
     "align_semantic"
-    "continuous_align_lexical_unigram" 
-    "continuous_align_lexical_bigram" 
-    "continuous_align_syntactic" 
-    "continuous_align_semantic"
-    "sent_engagement" 
-    "sent_negativity" 
-    "sent_supportiveness" 
-    "sent_warmth" 
-    "sent_approval" 
-    "sent_caring" 
-    "sent_curiosity"
-    "topline"
 )
 
 
-
 SEEDS=(2)
+
+
+
 # ── paths ─────────────────────────────────────────────────────────────────────
 ROOT="/scratch2/jliu/Feedback"
 WORKSPACE=$ROOT/"Conv-behavior-annotator/experiments/oberon/script/eval"
