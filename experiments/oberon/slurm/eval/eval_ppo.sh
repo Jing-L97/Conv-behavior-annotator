@@ -11,17 +11,25 @@
 
 
 # ── core experiment properties ────────────────────────────────────────────────
-DATA_SIZES=("1e5")
+DATA_SIZES=("1e5" "1e6" "1e7")
 
 REWARDS=(
+    "is_cr"
+    "is_acknowledgement"
     "align_lexical_unigram"
     "align_lexical_bigram"
     "align_syntactic"
-    "align_semantic"
+    "continuous_align_lexical_unigram" 
+    "continuous_align_lexical_bigram" 
+    "continuous_align_syntactic" 
+    "continuous_align_semantic"
+    "sent_warmth" 
 )
 
 
-SEEDS=(2)
+SEEDS=(1024 123 3 999)
+
+GEN_SEEDS=(1024 123 3 999 314159)
 
 
 
@@ -61,4 +69,4 @@ echo "  Seed      : $SEED"
 echo "  EXP tag   : $EXP"
 echo "========================================================"
 # ── launch ────────────────────────────────────────────────────────────────────
-bash ./eval_ppo.sh $REWARD $SEED $EXP $EXP_SETTING
+bash ./eval_ppo.sh $REWARD $SEED $EXP $EXP_SETTING $GEN_SEED

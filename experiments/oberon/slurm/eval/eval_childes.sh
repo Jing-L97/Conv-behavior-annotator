@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=eval_baseline
+#SBATCH --job-name=eval_childes
 #SBATCH --export=ALL
 #SBATCH --partition=gpu-p1
 #SBATCH --gres=gpu:1

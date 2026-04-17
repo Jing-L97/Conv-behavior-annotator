@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sentence_transformers import SentenceTransformer
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
 from pkg.rlhf.eval.fast_eval import (
     build_feature_list,
@@ -204,6 +204,7 @@ def eval_grammaticality_and_features(
 
 
 def eval_models(args):
+    set_seed(args.gen_seed)
     output_path = os.path.abspath(args.output_csv)
     output_dir = os.path.dirname(output_path)
     if output_dir:
@@ -321,6 +322,7 @@ def eval_models(args):
 def get_args():
     p = argparse.ArgumentParser()
 
+    p.add_argument("--gen_seed", type=int, default=42)
     p.add_argument("--model_paths", type=str, nargs="+", required=True)
     p.add_argument("--eval_model_path", type=str, required=True)
 
