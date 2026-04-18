@@ -1,41 +1,30 @@
 #!/bin/bash
-#SBATCH --job-name=eval_sel_seeds
+#SBATCH --job-name=eval_rest_seeds
 #SBATCH --export=ALL
-#SBATCH --partition=gpu-p1
+#SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=00:30:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/sel_seeds/%A_%a.log
-#SBATCH --array=0-479%8
-
+#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/rest_seeds/%A_%a.log
+#SBATCH --array=0-335
 # ── core experiment properties ────────────────────────────────────────────────
 DATA_SIZES=("1e5" "1e6" "1e7")
 REWARDS=(
-"is_cr"
-"is_acknowledgement"
-"align_lexical_unigram"
-"align_lexical_bigram"
-"align_syntactic"
-"continuous_align_lexical_unigram"
-"continuous_align_lexical_bigram"
-"continuous_align_syntactic"
-"continuous_align_semantic"
-"sent_warmth"
+    "align_semantic"
+    "sent_engagement" 
+    "sent_negativity" 
+    "sent_supportiveness" 
+    "sent_approval" 
+    "sent_caring" 
+    "sent_curiosity"
 )
 SEEDS=(1024 123 3 999)
 GEN_SEEDS=(1024 123 3 999)
-
-
 # ── paths ─────────────────────────────────────────────────────────────────────
 ROOT="/scratch2/jliu/Feedback"
 WORKSPACE=$ROOT/"Conv-behavior-annotator/experiments/oberon/script/eval"
 cd $WORKSPACE
-export HF_HOME=/scratch2/jliu/hf_cache
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export HF_HUB_OFFLINE=1      # ← this is the one that actually blocked you
-
 # ── array index validation ────────────────────────────────────────────────────
 TOTAL_COMBINATIONS=$(( ${#DATA_SIZES[@]} * ${#REWARDS[@]} * ${#SEEDS[@]} * ${#GEN_SEEDS[@]} ))
 if [[ $SLURM_ARRAY_TASK_ID -ge $TOTAL_COMBINATIONS ]]; then
