@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=04:00:00
+#SBATCH --time=00:30:00
 #SBATCH --output=/scratch2/jliu/Feedback/logs/eval/sel_seeds_2/%A_%a.log
 #SBATCH --array=0-599%8
 # ── core experiment properties ────────────────────────────────────────────────

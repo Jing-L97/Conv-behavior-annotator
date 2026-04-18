@@ -6,21 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
-from sentence_transformers import SentenceTransformer
-from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
-from pkg.rlhf.eval.fast_eval import (
-    build_feature_list,
-    compute_entropy_reg,
-    compute_feature_metrics_for_utts,
-)
-from pkg.rlhf.eval.gen_util import FeatureExtractor  # adjust if needed
-from pkg.rlhf.eval.grammar_util import (
-    compute_scores_childes_grammaticality,
-    compute_scores_gec,
-    load_childes_grammar_model,
-    load_gec_model,
-)
 from pkg.rlhf.utilities import DEFAULT_MAX_GENERATION_LEN, DEFAULT_MIN_GENERATION_LEN
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -98,6 +84,12 @@ def eval_grammaticality_and_features(
     output_max_length=DEFAULT_MAX_GENERATION_LEN,
     eval_batch_size=1024,
 ):
+    from pkg.rlhf.eval.fast_eval import (
+        compute_entropy_reg,
+        compute_feature_metrics_for_utts,
+    )
+    from pkg.rlhf.eval.grammar_util import compute_scores_childes_grammaticality, compute_scores_gec
+
     all_scores_childes = []
     all_scores_gec = []
     all_lengths = []
@@ -204,6 +196,22 @@ def eval_grammaticality_and_features(
 
 
 def eval_models(args):
+    # Heavy imports deferred until all pre-flight checks have passed
+    import torch
+    from sentence_transformers import SentenceTransformer
+    from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
+
+    from pkg.rlhf.eval.fast_eval import (
+        build_feature_list,
+    )
+    from pkg.rlhf.eval.gen_util import FeatureExtractor
+    from pkg.rlhf.eval.grammar_util import (
+        load_childes_grammar_model,
+        load_gec_model,
+    )
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     set_seed(args.gen_seed)
     output_path = os.path.abspath(args.output_csv)
     output_dir = os.path.dirname(output_path)
@@ -227,12 +235,7 @@ def eval_models(args):
 
     for model_path in args.model_paths:
         model_path = os.path.abspath(model_path)
-        print(f"\nChecking model path: {model_path}")
-
-        if not os.path.isdir(model_path):
-            print("Skipping non-existing checkpoint path:", model_path)
-            skipped.append(model_path)
-            continue
+        print(f"\nEvaluating model: {model_path}")
 
         model_basename = os.path.basename(model_path)
 
@@ -242,11 +245,6 @@ def eval_models(args):
         else:
             utts_csv_base, utts_csv_ext = os.path.splitext(args.output_utts_csv)
             output_utts_csv = f"{utts_csv_base}_{model_basename}{utts_csv_ext}"
-
-        # skip if there is already one
-        if Path(output_utts_csv).exists() and args.skip_existing:
-            print(f"WARNING: Output csv already exists: {output_utts_csv}")
-            exit(1)
 
         try:
             model = AutoModelForCausalLM.from_pretrained(model_path).to(device)
@@ -292,7 +290,6 @@ def eval_models(args):
         output_csv = output_path
     else:
         output_csv_base, output_csv_ext = os.path.splitext(output_path)
-        # Use last processed model basename (consistent with original behavior)
         output_csv = f"{output_csv_base}_{model_basename}{output_csv_ext}"
 
     df.to_csv(output_csv, index=True, index_label="model")
@@ -366,4 +363,30 @@ def get_args():
 
 if __name__ == "__main__":
     args = get_args()
+
+    # Pre-flight: check all model paths exist before importing heavy libs
+    invalid = [p for p in args.model_paths if not os.path.isdir(os.path.abspath(p))]
+    if invalid:
+        for p in invalid:
+            print(f"Skipping non-existing checkpoint path: {p}")
+        args.model_paths = [p for p in args.model_paths if os.path.isdir(os.path.abspath(p))]
+        if not args.model_paths:
+            print("No valid model paths found. Exiting.")
+            exit(1)
+
+    # Pre-flight: check output_utts_csv existence before importing heavy libs
+    if args.skip_existing:
+        if args.baseline:
+            if Path(args.output_utts_csv).exists():
+                print(f"WARNING: Output csv already exists: {args.output_utts_csv}")
+                exit(1)
+        else:
+            for model_path in args.model_paths:
+                model_basename = os.path.basename(os.path.abspath(model_path))
+                utts_csv_base, utts_csv_ext = os.path.splitext(args.output_utts_csv)
+                output_utts_csv = f"{utts_csv_base}_{model_basename}{utts_csv_ext}"
+                if Path(output_utts_csv).exists():
+                    print(f"WARNING: Output csv already exists: {output_utts_csv}")
+                    exit(1)
+
     eval_models(args)

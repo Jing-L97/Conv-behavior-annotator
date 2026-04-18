@@ -31,10 +31,10 @@ GEN_SEEDS=(1024 123 3 999)
 ROOT="/scratch2/jliu/Feedback"
 WORKSPACE=$ROOT/"Conv-behavior-annotator/experiments/oberon/script/eval"
 cd $WORKSPACE
-export HF_HOME=/scratch2/jliu/hf_cache
-export TRANSFORMERS_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
-export HF_HUB_OFFLINE=1      # ← this is the one that actually blocked you
+# export HF_HOME=/scratch2/jliu/hf_cache
+# export TRANSFORMERS_OFFLINE=0
+# export HF_DATASETS_OFFLINE=0
+# export HF_HUB_OFFLINE=0      # ← this is the one that actually blocked you
 
 # ── array index validation ────────────────────────────────────────────────────
 TOTAL_COMBINATIONS=$(( ${#DATA_SIZES[@]} * ${#REWARDS[@]} * ${#SEEDS[@]} * ${#GEN_SEEDS[@]} ))

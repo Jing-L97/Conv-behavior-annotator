@@ -5,14 +5,14 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=12:00:00
+#SBATCH --time=00:30:00
 #SBATCH --output=/scratch2/jliu/Feedback/logs/eval/baseline/%A_%a.log
-#SBATCH --array=0-14
+#SBATCH --array=0-11
 # ── core experiment properties ────────────────────────────────────────────────
 DATA_SIZES=("1e5" "1e6" "1e7")
 LMS=("967ufsfk" "he3nnzld" "uu5rtja8")
 SEEDS=(3)
-GEN_SEEDS=(0 1 2 42 7)
+GEN_SEEDS=(1024 123 3 999)
 ROOT="/scratch2/jliu/Feedback"
 WORKSPACE="$ROOT/Conv-behavior-annotator/experiments/oberon/script/eval"
 cd "$WORKSPACE"
