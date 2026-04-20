@@ -7,7 +7,12 @@ import pandas as pd
 from tqdm import tqdm
 
 from pkg import settings
-from pkg.rlhf.eval.collect import collect_babylm_metrics, collect_gen_metrics, extract_reward, extract_scale
+from pkg.rlhf.eval.collect import (
+    collect_babylm_metrics,
+    collect_gen_metrics,
+    extract_reward,
+    extract_scale,
+)
 
 DEFAULT_MODEL_CONFIGS = [
     "1e5_entropy_001_lm_loss_001_target_6",
@@ -61,7 +66,9 @@ def get_args():
 
 
 def collect_baseline(args, rows, dfs):
-    """Collect results from baseline directory: baseline/{scale}/{seed}/"""
+    """Collect results from baseline directory:
+    NEW: baseline/{scale}/{seed}/{generation_seed}/
+    """
     baseline_root = settings.PATH.result_dir / "baseline"
 
     if not baseline_root.exists():
@@ -85,52 +92,63 @@ def collect_baseline(args, rows, dfs):
             if seed not in args.seeds:
                 continue
 
-            row_dict = {
-                "model_config": "baseline",
-                "scale": scale,
-                "seed": seed,
-                "reward": "baseline",
-            }
-
-            # -----------------------
-            # Grammar metrics (optional)
-            # -----------------------
+            # grammar metrics (shared across gen seeds)
             metrics_file = seed_dir / "benchmark.pkl"
+            best_zorro, best_blimp = None, None
             if metrics_file.exists():
                 best_zorro, best_blimp = collect_babylm_metrics(metrics_file)
-                row_dict["best_zorro"] = best_zorro
-                row_dict["best_blimp"] = best_blimp
 
-            # -----------------------
-            # Generation metrics
-            # -----------------------
-            gen_file = seed_dir / "result.csv"
-            if gen_file.exists():
-                gen_metrics = collect_gen_metrics(gen_file)
-                row_dict.update(gen_metrics)
+            # iterate generation seeds
+            for gen_seed_dir in seed_dir.iterdir():
+                if not gen_seed_dir.is_dir():
+                    continue
 
-            rows.append(row_dict)
+                try:
+                    gen_seed = int(gen_seed_dir.name)
+                except ValueError:
+                    gen_seed = gen_seed_dir.name  # fallback
 
-            # -----------------------
-            # Sample utterances
-            # -----------------------
-            utt_file = seed_dir / "utt.csv"
-            if utt_file.exists():
-                df = pd.read_csv(utt_file)
-                df = df.sample(
-                    n=args.target_row_num,
-                    replace=True,
-                    random_state=1,
-                )
-                df["model_config"] = "baseline"
-                df["scale"] = scale
-                df["seed"] = seed
-                df["reward"] = "baseline"
-                dfs.append(df)
+                row_dict = {
+                    "model_config": "baseline",
+                    "scale": scale,
+                    "seed": seed,
+                    "generation_seed": gen_seed,
+                    "reward": "baseline",
+                }
+
+                if best_zorro is not None:
+                    row_dict["best_zorro"] = best_zorro
+                    row_dict["best_blimp"] = best_blimp
+
+                # generation metrics
+                gen_file = gen_seed_dir / "result.csv"
+                if gen_file.exists():
+                    gen_metrics = collect_gen_metrics(gen_file)
+                    row_dict.update(gen_metrics)
+
+                rows.append(row_dict)
+
+                # sample utterances
+                utt_file = gen_seed_dir / "utt.csv"
+                if utt_file.exists():
+                    df = pd.read_csv(utt_file)
+                    df = df.sample(
+                        n=args.target_row_num,
+                        replace=True,
+                        random_state=1,
+                    )
+                    df["model_config"] = "baseline"
+                    df["scale"] = scale
+                    df["seed"] = seed
+                    df["generation_seed"] = gen_seed
+                    df["reward"] = "baseline"
+                    dfs.append(df)
 
 
 def collect_ppo(args, rows, dfs):
-    """Collect results from ppo directory: ppo/{model_config}/{seed}/{reward_subdir}/"""
+    """Collect results from ppo directory:
+    NEW: ppo/{model_config}/{seed}/{reward_subdir}/{generation_seed}/
+    """
     for model_config in args.model_configs:
         scale = extract_scale(model_config)
 
@@ -150,49 +168,61 @@ def collect_ppo(args, rows, dfs):
 
                 reward = extract_reward(sub_dir)
 
-                row_dict = {
-                    "model_config": model_config,
-                    "scale": scale,
-                    "seed": seed,
-                    "reward": reward,
-                }
-
-                # -----------------------
-                # Grammar metrics (optional)
-                # -----------------------
+                # grammar metrics (shared)
                 metrics_file = sub_dir / "best_reward" / "metrics.pkl"
+                best_zorro, best_blimp = None, None
                 if metrics_file.exists():
                     best_zorro, best_blimp = collect_babylm_metrics(metrics_file)
-                    row_dict["best_zorro"] = best_zorro
-                    row_dict["best_blimp"] = best_blimp
 
-                # -----------------------
-                # Generation metrics (optional)
-                # -----------------------
-                gen_subdir = gen_root / sub_dir.name
-                gen_file = gen_subdir / "result_best_reward.csv"
-                if gen_file.exists():
-                    gen_metrics = collect_gen_metrics(gen_file)
-                    row_dict.update(gen_metrics)
+                gen_subdir_root = gen_root / sub_dir.name
+                if not gen_subdir_root.exists():
+                    continue
 
-                rows.append(row_dict)
+                # iterate generation seeds
+                for gen_seed_dir in gen_subdir_root.iterdir():
+                    if not gen_seed_dir.is_dir():
+                        continue
 
-                # -----------------------
-                # Sample utterances (optional)
-                # -----------------------
-                utt_file = gen_subdir / "utt_best_reward.csv"
-                if utt_file.exists():
-                    df = pd.read_csv(utt_file)
-                    df = df.sample(
-                        n=args.target_row_num,
-                        replace=True,
-                        random_state=1,
-                    )
-                    df["model_config"] = model_config
-                    df["scale"] = scale
-                    df["seed"] = seed
-                    df["reward"] = reward
-                    dfs.append(df)
+                    try:
+                        gen_seed = int(gen_seed_dir.name)
+                    except ValueError:
+                        gen_seed = gen_seed_dir.name
+
+                    row_dict = {
+                        "model_config": model_config,
+                        "scale": scale,
+                        "seed": seed,
+                        "generation_seed": gen_seed,
+                        "reward": reward,
+                    }
+
+                    if best_zorro is not None:
+                        row_dict["best_zorro"] = best_zorro
+                        row_dict["best_blimp"] = best_blimp
+
+                    # generation metrics
+                    gen_file = gen_seed_dir / "result_best_reward.csv"
+                    if gen_file.exists():
+                        gen_metrics = collect_gen_metrics(gen_file)
+                        row_dict.update(gen_metrics)
+
+                    rows.append(row_dict)
+
+                    # sample utterances
+                    utt_file = gen_seed_dir / "utt_best_reward.csv"
+                    if utt_file.exists():
+                        df = pd.read_csv(utt_file)
+                        df = df.sample(
+                            n=args.target_row_num,
+                            replace=True,
+                            random_state=1,
+                        )
+                        df["model_config"] = model_config
+                        df["scale"] = scale
+                        df["seed"] = seed
+                        df["generation_seed"] = gen_seed
+                        df["reward"] = reward
+                        dfs.append(df)
 
 
 def main():
@@ -215,6 +245,7 @@ def main():
 
     results_df.to_csv(output_dir / "result.csv", index=False)
     final_df.to_excel(output_dir / f"sampled_{args.target_row_num}.xlsx", index=False)
+
     print(f"Saved results to {output_dir}/result.csv")
     print(f"Saved results to {output_dir}/sampled_{args.target_row_num}.xlsx")
 

@@ -149,7 +149,7 @@ def collect_ppo(args, rows, dfs):
     """Collect results from ppo directory:
     NEW: ppo/{model_config}/{seed}/{reward_subdir}/{generation_seed}/
     """
-    for model_config in args.model_configs:
+    for model_config in tqdm(args.model_configs):
         scale = extract_scale(model_config)
 
         if scale not in set(args.scales):
@@ -225,6 +225,64 @@ def collect_ppo(args, rows, dfs):
                         dfs.append(df)
 
 
+def collect_childes(args, rows, dfs):
+    """Collect results from childes directory."""
+    childes_root = settings.PATH.result_dir / "childes"
+
+    if not childes_root.exists():
+        print(f"Warning: childes directory not found at {childes_root}")
+        return
+
+    subdirs = [
+        "response_transcript_clean",
+        "utt_transcript_clean",
+    ]
+
+    for sub in subdirs:
+        sub_dir = childes_root / sub
+        if not sub_dir.exists():
+            continue
+
+        # ---------
+        # row-level metrics
+        # ---------
+        row_dict = {
+            "model_config": "childes",
+            "scale": "childes",  # placeholder
+            "seed": "childes",  # placeholder
+            "generation_seed": sub,  # differentiate the two folders
+            "reward": "childes",  # placeholder
+        }
+
+        result_file = sub_dir / "result.csv"
+        if result_file.exists():
+            gen_metrics = collect_gen_metrics(result_file)
+            row_dict.update(gen_metrics)
+
+        rows.append(row_dict)
+
+        # ---------
+        # utterances
+        # ---------
+        utt_file = sub_dir / "utt.csv"
+        if utt_file.exists():
+            df = pd.read_csv(utt_file)
+
+            df = df.sample(
+                n=args.target_row_num,
+                replace=True,
+                random_state=1,
+            )
+
+            df["model_config"] = "childes"
+            df["scale"] = "childes"
+            df["seed"] = "childes"
+            df["generation_seed"] = sub
+            df["reward"] = "childes"
+
+            dfs.append(df)
+
+
 def main():
     args = get_args()
 
@@ -236,6 +294,7 @@ def main():
 
     collect_baseline(args, rows, dfs)
     collect_ppo(args, rows, dfs)
+    collect_childes(args, rows, dfs)
 
     # -----------------------
     # Final outputs

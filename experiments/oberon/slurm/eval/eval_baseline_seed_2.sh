@@ -7,12 +7,12 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=00:30:00
 #SBATCH --output=/scratch2/jliu/Feedback/logs/eval/baseline/2_%A_%a.log
-#SBATCH --array=0-1
+#SBATCH --array=0-4
 # ── core experiment properties ────────────────────────────────────────────────
 DATA_SIZES=("1e5")
-LMS=("967ufsfk")
+LMS=("95f8k8zc")
 SEEDS=(2)
-GEN_SEEDS=(999)
+GEN_SEEDS=(0 1 2 42 7)
 ROOT="/scratch2/jliu/Feedback"
 WORKSPACE="$ROOT/Conv-behavior-annotator/experiments/oberon/script/eval"
 cd "$WORKSPACE"
