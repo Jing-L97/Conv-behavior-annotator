@@ -1,41 +1,30 @@
 #!/bin/bash
-#SBATCH --job-name=ppo
+#SBATCH --job-name=ppo_sent
 #SBATCH --export=ALL
 #SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=12:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/%A_%a.log
+#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/sent_%A_%a.log
 #SBATCH --array=0-50%3
 
 # ── core experiment properties ────────────────────────────────────────────────
 DATA_SIZES=("1e5" "1e6" "1e7")
 
-PRETRAIN_SEEDS=(1 2 3)
+PRETRAIN_SEEDS=(1 2)
 
 REWARDS=(
-    "is_cr"
-    "is_acknowledgement"
-    "align_lexical_unigram"
-    "align_lexical_bigram"
-    "align_syntactic"
-    "continuous_align_lexical_unigram" 
-    "continuous_align_lexical_bigram" 
-    "continuous_align_syntactic" 
-    "continuous_align_semantic"
-    "sent_warmth" 
-    "align_semantic"
-    "sent_engagement" 
-    "sent_negativity" 
-    "sent_supportiveness" 
-    "sent_approval" 
-    "sent_caring" 
+    "sent_warmth"
+    "sent_engagement"
+    "sent_negativity"
+    "sent_supportiveness"
+    "sent_approval"
+    "sent_caring"
     "sent_curiosity"
-    "topline"
 )
 
-FINETUNE_SEEDS=(3 123 1024 999)
+FINETUNE_SEEDS=(3)
 
 # ── dimension sizes ───────────────────────────────────────────────────────────
 N_DATA=${#DATA_SIZES[@]}          # 3

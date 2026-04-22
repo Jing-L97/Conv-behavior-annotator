@@ -3,10 +3,11 @@
 # ── positional arguments ──────────────────────────────────────────────────────
 REWARD=$1
 REWARD_SEED=$2
-SEED=$3
+FINETUNE_SEED=$3
 EXP=$4
 EXP_SETTING=$5
-LM=$6
+DATA_SIZE=$6
+PRETRAIN_SEED=$7
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 ROOT="/scratch2/jliu/Feedback"
@@ -18,10 +19,12 @@ if [[ "$REWARD" == "topline" ]]; then
     REWARD_PATH=$MODEL_ROOT/reward/$REWARD
 fi
 
-mkdir -p $MODEL_ROOT/ppo/$REWARD_$EXP/$SEED
+echo "Reward model path: $REWARD_PATH"
+echo "Policy model path: $MODEL_ROOT/lm/lightning_logs/$DATA_SIZE/$PRETRAIN_SEED/ckpt_huggingface_best/"
+echo "output dir: $MODEL_ROOT/ppo/$EXP_SETTING/$PRETRAIN_SEED/$FINETUNE_SEED"
 
 python -u $SCRIPT_ROOT/train/train_ppo.py \
-    --policy_model $MODEL_ROOT/lm/lightning_logs/$LM/ckpt_huggingface_best/ \
+    --policy_model $MODEL_ROOT/lm/lightning_logs/$DATA_SIZE/$PRETRAIN_SEED/ckpt_huggingface_best/ \
     --value_model $REWARD_PATH \
     --steps 6000 \
     --target 6 \
@@ -33,7 +36,9 @@ python -u $SCRIPT_ROOT/train/train_ppo.py \
     --lm_loss_coef 0.001 \
     --exp_name $REWARD"_"$EXP \
     --eval_data_dir $DATA_ROOT \
-    --output_dir $MODEL_ROOT/ppo/$EXP_SETTING/$SEED \
+    --output_dir $MODEL_ROOT/ppo/$EXP_SETTING/$PRETRAIN_SEED/$FINETUNE_SEED \
     --wandb_dir $ROOT \
     --skip_existing \
-    --seed $SEED
+    --seed $FINETUNE_SEED    
+    
+    

@@ -1,16 +1,15 @@
 #!/bin/bash
 # ── positional arguments ──────────────────────────────────────────────────────
-LM=$1
-SEED=$2
-DATA_SIZE=$3
-GEN_SEED=$4
+SEED=$1 # LM pretraining seed
+DATA_SIZE=$2
+GEN_SEED=$3
 # ── paths ─────────────────────────────────────────────────────────────────────
 ROOT="/scratch2/jliu/Feedback"
 SCRIPT_ROOT=$ROOT/"Conv-behavior-annotator/src/scripts"
 MODEL_ROOT=$ROOT/"models"
 DATA_ROOT=$ROOT/"datasets"
 
-TARGET_MDOEL=$MODEL_ROOT/lm/lightning_logs/$LM/ckpt_huggingface_best
+TARGET_MDOEL=$MODEL_ROOT/lm/lightning_logs/$DATA_SIZE/$SEED/ckpt_huggingface_best
 OUTPUT_DIR=$ROOT/results/baseline/$DATA_SIZE/$SEED/$GEN_SEED
 
 mkdir -p $OUTPUT_DIR

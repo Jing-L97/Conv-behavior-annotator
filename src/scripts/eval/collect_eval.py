@@ -11,6 +11,7 @@ from pkg.rlhf.eval.collect import (
     collect_babylm_metrics,
     collect_gen_metrics,
     extract_reward,
+    extract_reward_seed,
     extract_scale,
 )
 
@@ -20,55 +21,32 @@ DEFAULT_MODEL_CONFIGS = [
     "1e7_entropy_001_lm_loss_001_target_6",
 ]
 
-DEFAULT_SEEDS = [2, 3, 123, 999, 1024]
+DEFAULT_SEEDS = [1, 2, 3, 123, 999, 1024]
 
 
 def get_args():
-    p = argparse.ArgumentParser(description="Collect PPO evaluation results")
+    p = argparse.ArgumentParser(description="Collect PPO / baseline / childes evaluation results")
 
-    p.add_argument(
-        "--model-configs",
-        nargs="+",
-        default=DEFAULT_MODEL_CONFIGS,
-        help="List of model configs",
-    )
+    p.add_argument("--model-configs", nargs="+", default=DEFAULT_MODEL_CONFIGS)
+    p.add_argument("--seeds", nargs="+", type=int, default=DEFAULT_SEEDS)
+    p.add_argument("--target-row-num", type=int, default=100)
+    p.add_argument("--scales", nargs="+", default=["1e5", "1e6", "1e7"])
+    p.add_argument("--output-dir", type=str, default=None)
 
+    # ✅ new flag
     p.add_argument(
-        "--seeds",
-        nargs="+",
-        type=int,
-        default=DEFAULT_SEEDS,
-        help="Random seeds",
-    )
-
-    p.add_argument(
-        "--target-row-num",
-        type=int,
-        default=100,
-        help="Number of sampled utterances per run",
-    )
-
-    p.add_argument(
-        "--scales",
-        nargs="+",
-        default=["1e5", "1e6", "1e7"],
-        help="Keep only these scales",
-    )
-
-    p.add_argument(
-        "--output-dir",
-        type=str,
-        default=None,
-        help="Override output directory",
+        "--collect_utterances",
+        action="store_true",
+        help="Whether to collect and sample utterances",
     )
 
     return p.parse_args()
 
 
+# -------------------------
+# Baseline
+# -------------------------
 def collect_baseline(args, rows, dfs):
-    """Collect results from baseline directory:
-    NEW: baseline/{scale}/{seed}/{generation_seed}/
-    """
     baseline_root = settings.PATH.result_dir / "baseline"
 
     if not baseline_root.exists():
@@ -80,214 +58,228 @@ def collect_baseline(args, rows, dfs):
         if not scale_dir.exists():
             continue
 
-        for seed_dir in scale_dir.iterdir():
-            if not seed_dir.is_dir():
+        for lm_seed_dir in scale_dir.iterdir():
+            if not lm_seed_dir.is_dir():
                 continue
 
             try:
-                seed = int(seed_dir.name)
+                lm_seed = int(lm_seed_dir.name)
             except ValueError:
                 continue
 
-            if seed not in args.seeds:
+            if lm_seed not in args.seeds:
                 continue
 
-            # grammar metrics (shared across gen seeds)
-            metrics_file = seed_dir / "benchmark.pkl"
+            metrics_file = lm_seed_dir / "benchmark.pkl"
             best_zorro, best_blimp = None, None
             if metrics_file.exists():
                 best_zorro, best_blimp = collect_babylm_metrics(metrics_file)
 
-            # iterate generation seeds
-            for gen_seed_dir in seed_dir.iterdir():
+            for gen_seed_dir in lm_seed_dir.iterdir():
                 if not gen_seed_dir.is_dir():
                     continue
 
                 try:
                     gen_seed = int(gen_seed_dir.name)
                 except ValueError:
-                    gen_seed = gen_seed_dir.name  # fallback
+                    gen_seed = gen_seed_dir.name
 
                 row_dict = {
                     "model_config": "baseline",
                     "scale": scale,
-                    "seed": seed,
+                    "pretrain_seed": lm_seed,
+                    "fine_tune_seed": "none",
                     "generation_seed": gen_seed,
-                    "reward": "baseline",
+                    "reward": "none",
+                    "reward_seed": "none",
                 }
 
                 if best_zorro is not None:
                     row_dict["best_zorro"] = best_zorro
                     row_dict["best_blimp"] = best_blimp
 
-                # generation metrics
                 gen_file = gen_seed_dir / "result.csv"
                 if gen_file.exists():
-                    gen_metrics = collect_gen_metrics(gen_file)
-                    row_dict.update(gen_metrics)
+                    row_dict.update(collect_gen_metrics(gen_file))
 
                 rows.append(row_dict)
 
-                # sample utterances
-                utt_file = gen_seed_dir / "utt.csv"
-                if utt_file.exists():
-                    df = pd.read_csv(utt_file)
-                    df = df.sample(
-                        n=args.target_row_num,
-                        replace=True,
-                        random_state=1,
-                    )
-                    df["model_config"] = "baseline"
-                    df["scale"] = scale
-                    df["seed"] = seed
-                    df["generation_seed"] = gen_seed
-                    df["reward"] = "baseline"
-                    dfs.append(df)
-
-
-def collect_ppo(args, rows, dfs):
-    """Collect results from ppo directory:
-    NEW: ppo/{model_config}/{seed}/{reward_subdir}/{generation_seed}/
-    """
-    for model_config in tqdm(args.model_configs):
-        scale = extract_scale(model_config)
-
-        if scale not in set(args.scales):
-            continue
-
-        for seed in tqdm(args.seeds):
-            model_root = settings.PATH.model_dir / "ppo" / model_config / str(seed)
-            gen_root = settings.PATH.result_dir / "ppo" / model_config / str(seed)
-
-            if not model_root.exists():
-                continue
-
-            for sub_dir in Path(model_root).iterdir():
-                if not sub_dir.is_dir():
-                    continue
-
-                reward = extract_reward(sub_dir)
-
-                # grammar metrics (shared)
-                metrics_file = sub_dir / "best_reward" / "metrics.pkl"
-                best_zorro, best_blimp = None, None
-                if metrics_file.exists():
-                    best_zorro, best_blimp = collect_babylm_metrics(metrics_file)
-
-                gen_subdir_root = gen_root / sub_dir.name
-                if not gen_subdir_root.exists():
-                    continue
-
-                # iterate generation seeds
-                for gen_seed_dir in gen_subdir_root.iterdir():
-                    if not gen_seed_dir.is_dir():
-                        continue
-
-                    try:
-                        gen_seed = int(gen_seed_dir.name)
-                    except ValueError:
-                        gen_seed = gen_seed_dir.name
-
-                    row_dict = {
-                        "model_config": model_config,
-                        "scale": scale,
-                        "seed": seed,
-                        "generation_seed": gen_seed,
-                        "reward": reward,
-                    }
-
-                    if best_zorro is not None:
-                        row_dict["best_zorro"] = best_zorro
-                        row_dict["best_blimp"] = best_blimp
-
-                    # generation metrics
-                    gen_file = gen_seed_dir / "result_best_reward.csv"
-                    if gen_file.exists():
-                        gen_metrics = collect_gen_metrics(gen_file)
-                        row_dict.update(gen_metrics)
-
-                    rows.append(row_dict)
-
-                    # sample utterances
-                    utt_file = gen_seed_dir / "utt_best_reward.csv"
+                # ✅ controlled utterance collection
+                if args.collect_utterances:
+                    utt_file = gen_seed_dir / "utt.csv"
                     if utt_file.exists():
-                        df = pd.read_csv(utt_file)
-                        df = df.sample(
-                            n=args.target_row_num,
-                            replace=True,
-                            random_state=1,
-                        )
-                        df["model_config"] = model_config
+                        df = pd.read_csv(utt_file).sample(n=args.target_row_num, replace=True, random_state=1)
+                        df["model_config"] = "baseline"
                         df["scale"] = scale
-                        df["seed"] = seed
+                        df["pretrain_seed"] = lm_seed
+                        df["fine_tune_seed"] = "none"
                         df["generation_seed"] = gen_seed
-                        df["reward"] = reward
+                        df["reward"] = "none"
+                        df["reward_seed"] = "none"
                         dfs.append(df)
 
 
+# -------------------------
+# PPO
+# -------------------------
+
+
+def collect_ppo(args, rows, dfs):
+    for model_config in tqdm(args.model_configs):
+        scale = extract_scale(model_config)
+        if scale not in set(args.scales):
+            continue
+
+        config_root_model = settings.PATH.model_dir / "ppo" / model_config
+        config_root_gen = settings.PATH.result_dir / "ppo" / model_config
+
+        if not config_root_model.exists():
+            continue
+
+        # lm_seed level (e.g., 3)
+        for lm_seed_dir in config_root_model.iterdir():
+            if not lm_seed_dir.is_dir():
+                continue
+
+            try:
+                lm_seed = int(lm_seed_dir.name)
+            except ValueError:
+                continue
+
+            if lm_seed not in args.seeds:
+                continue
+
+            # fine-tune seed level (e.g., 123)
+            for finetune_seed_dir in lm_seed_dir.iterdir():
+                if not finetune_seed_dir.is_dir():
+                    continue
+
+                fine_tune_seed = finetune_seed_dir.name
+
+                # reward directory level
+                for reward_dir in finetune_seed_dir.iterdir():
+                    if not reward_dir.is_dir():
+                        continue
+
+                    reward = extract_reward(reward_dir)
+                    reward_seed = extract_reward_seed(reward_dir)
+
+                    # metrics (from model_dir)
+                    metrics_file = reward_dir / "best_reward" / "metrics.pkl"
+                    best_zorro, best_blimp = None, None
+                    if metrics_file.exists():
+                        best_zorro, best_blimp = collect_babylm_metrics(metrics_file)
+
+                    # corresponding result dir (mirror structure in result_dir)
+                    gen_root = config_root_gen / str(lm_seed) / fine_tune_seed / reward_dir.name
+
+                    if not gen_root.exists():
+                        continue
+
+                    # generation seed level
+                    for gen_seed_dir in gen_root.iterdir():
+                        if not gen_seed_dir.is_dir():
+                            continue
+
+                        try:
+                            gen_seed = int(gen_seed_dir.name)
+                        except ValueError:
+                            gen_seed = gen_seed_dir.name
+
+                        row_dict = {
+                            "model_config": model_config,
+                            "scale": scale,
+                            "pretrain_seed": lm_seed,
+                            "fine_tune_seed": fine_tune_seed,
+                            "generation_seed": gen_seed,
+                            "reward": reward,
+                            "reward_seed": reward_seed,
+                        }
+
+                        if best_zorro is not None:
+                            row_dict["best_zorro"] = best_zorro
+                            row_dict["best_blimp"] = best_blimp
+
+                        gen_file = gen_seed_dir / "result_best_reward.csv"
+                        if gen_file.exists():
+                            row_dict.update(collect_gen_metrics(gen_file))
+
+                        rows.append(row_dict)
+
+                        # ✅ controlled utterance collection
+                        if args.collect_utterances:
+                            utt_file = gen_seed_dir / "utt_best_reward.csv"
+                            if utt_file.exists():
+                                df = pd.read_csv(utt_file).sample(
+                                    n=args.target_row_num,
+                                    replace=True,
+                                    random_state=1,
+                                )
+                                df["model_config"] = model_config
+                                df["scale"] = scale
+                                df["pretrain_seed"] = lm_seed
+                                df["fine_tune_seed"] = fine_tune_seed
+                                df["generation_seed"] = gen_seed
+                                df["reward"] = reward
+                                df["reward_seed"] = reward_seed
+                                dfs.append(df)
+
+
+# -------------------------
+# Childes
+# -------------------------
 def collect_childes(args, rows, dfs):
-    """Collect results from childes directory."""
     childes_root = settings.PATH.result_dir / "childes"
 
     if not childes_root.exists():
         print(f"Warning: childes directory not found at {childes_root}")
         return
 
-    subdirs = [
-        "response_transcript_clean",
-        "utt_transcript_clean",
-    ]
+    subdirs = ["response_transcript_clean", "utt_transcript_clean"]
 
     for sub in subdirs:
         sub_dir = childes_root / sub
         if not sub_dir.exists():
             continue
 
-        # ---------
-        # row-level metrics
-        # ---------
         row_dict = {
             "model_config": "childes",
-            "scale": "childes",  # placeholder
-            "seed": "childes",  # placeholder
-            "generation_seed": sub,  # differentiate the two folders
-            "reward": "childes",  # placeholder
+            "scale": "childes",
+            "pretrain_seed": "none",
+            "fine_tune_seed": "none",
+            "generation_seed": sub,
+            "reward": "childes",
+            "reward_seed": "none",
         }
 
         result_file = sub_dir / "result.csv"
         if result_file.exists():
-            gen_metrics = collect_gen_metrics(result_file)
-            row_dict.update(gen_metrics)
+            row_dict.update(collect_gen_metrics(result_file))
 
         rows.append(row_dict)
 
-        # ---------
-        # utterances
-        # ---------
-        utt_file = sub_dir / "utt.csv"
-        if utt_file.exists():
-            df = pd.read_csv(utt_file)
-
-            df = df.sample(
-                n=args.target_row_num,
-                replace=True,
-                random_state=1,
-            )
-
-            df["model_config"] = "childes"
-            df["scale"] = "childes"
-            df["seed"] = "childes"
-            df["generation_seed"] = sub
-            df["reward"] = "childes"
-
-            dfs.append(df)
+        # ✅ controlled utterance collection
+        if args.collect_utterances:
+            utt_file = sub_dir / "utt.csv"
+            if utt_file.exists():
+                df = pd.read_csv(utt_file).sample(n=args.target_row_num, replace=True, random_state=1)
+                df["model_config"] = "childes"
+                df["scale"] = "childes"
+                df["pretrain_seed"] = "none"
+                df["fine_tune_seed"] = "none"
+                df["generation_seed"] = sub
+                df["reward"] = "none"
+                df["reward_seed"] = "none"
+                dfs.append(df)
 
 
+# -------------------------
+# Main
+# -------------------------
 def main():
     args = get_args()
 
-    rows = []
-    dfs = []
+    rows, dfs = [], []
 
     output_dir = Path(args.output_dir) if args.output_dir else settings.PATH.result_dir
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -296,17 +288,17 @@ def main():
     collect_ppo(args, rows, dfs)
     collect_childes(args, rows, dfs)
 
-    # -----------------------
-    # Final outputs
-    # -----------------------
     results_df = pd.DataFrame(rows)
-    final_df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+
+    if args.collect_utterances and dfs:
+        final_df = pd.concat(dfs, ignore_index=True)
+        final_df.to_excel(output_dir / f"sampled_{args.target_row_num}.xlsx", index=False)
+        print(f"Saved utterances to {output_dir}/sampled_{args.target_row_num}.xlsx")
+    else:
+        print("Skipping utterance export")
 
     results_df.to_csv(output_dir / "result.csv", index=False)
-    final_df.to_excel(output_dir / f"sampled_{args.target_row_num}.xlsx", index=False)
-
     print(f"Saved results to {output_dir}/result.csv")
-    print(f"Saved results to {output_dir}/sampled_{args.target_row_num}.xlsx")
 
 
 if __name__ == "__main__":
