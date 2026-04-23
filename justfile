@@ -4,7 +4,7 @@ current_dir := justfile_directory()
 COML_CLUSTER := "oberon2"
 scratch2_deploy_folder := "/scratch2/jliu/Feedback/Conv-behavior-annotator"
 JZ_CLUSTER := "jean-zay"
-JZ_deploy_folder := "/lustre/fswork/projects/rech/eqb/commun/Feedback/Conv-behavior-annotator"
+JZ_deploy_folder := "/lustre/fsn1/projects/rech/eqb/uye44va/Feedback/Conv-behavior-annotator"
 
 
 hostname := `hostname`
@@ -38,8 +38,7 @@ deploy-coml: exec-permissions
     
 deploy-jz: exec-permissions
     echo "Syncing source-code directory..."
-    rsync -azP --delete --exclude=".venv" --exclude=".mypy_cache" --exclude="notebooks" --exclude=".ruff_cache" --exclude="src/*.egg-info" "{{current_dir}}/" "{{JZ_CLUSTER}}:{{JZ_deploy_folder}}"
-
+    rsync -azP --delete --exclude=".venv" --exclude=".git" --exclude=".mypy_cache" --exclude="src/evaluation-pipeline-2024" --exclude="src/grammaticality" --exclude="notebooks" --exclude=".ruff_cache" --exclude="src/*.egg-info" "{{current_dir}}/" "{{JZ_CLUSTER}}:{{JZ_deploy_folder}}"
 
 [doc("Make executables")]
 exec-permissions:
