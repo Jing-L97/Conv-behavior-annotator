@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --time=12:00:00
 #SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/sent_%A_%a.log
-#SBATCH --array=0-50%3
+#SBATCH --array=0-125%3
 
 # ── core experiment properties ────────────────────────────────────────────────
 DATA_SIZES=("1e5" "1e6" "1e7")
@@ -24,7 +24,12 @@ REWARDS=(
     "sent_curiosity"
 )
 
-FINETUNE_SEEDS=(3)
+FINETUNE_SEEDS=(1024 123 999)
+
+
+
+
+
 
 # ── dimension sizes ───────────────────────────────────────────────────────────
 N_DATA=${#DATA_SIZES[@]}          # 3

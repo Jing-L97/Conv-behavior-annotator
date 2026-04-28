@@ -36,9 +36,15 @@ deploy-coml: exec-permissions
     echo "Syncing source-code directory..."
     rsync -azP --delete --exclude=".venv" --exclude=".git" --exclude=".mypy_cache" --exclude="src/evaluation-pipeline-2024" --exclude="src/grammaticality" --exclude="notebooks" --exclude=".ruff_cache" --exclude="src/*.egg-info" "{{current_dir}}/" "{{COML_CLUSTER}}:{{scratch2_deploy_folder}}"
     
+# deploy-jz: exec-permissions
+#     echo "Syncing source-code directory..."
+#     rsync -azP --delete --exclude=".venv" --exclude=".git" --exclude=".mypy_cache" --exclude="src/evaluation-pipeline-2024" --exclude="src/grammaticality" --exclude="notebooks" --exclude=".ruff_cache" --exclude="src/*.egg-info" "{{current_dir}}/" "{{JZ_CLUSTER}}:{{JZ_deploy_folder}}"
+
 deploy-jz: exec-permissions
     echo "Syncing source-code directory..."
-    rsync -azP --delete --exclude=".venv" --exclude=".git" --exclude=".mypy_cache" --exclude="src/evaluation-pipeline-2024" --exclude="src/grammaticality" --exclude="notebooks" --exclude=".ruff_cache" --exclude="src/*.egg-info" "{{current_dir}}/" "{{JZ_CLUSTER}}:{{JZ_deploy_folder}}"
+    rsync -azP --delete --exclude=".venv" --exclude=".git" --exclude=".mypy_cache" --exclude="notebooks" --exclude=".ruff_cache" --exclude="src/*.egg-info" "{{current_dir}}/" "{{JZ_CLUSTER}}:{{JZ_deploy_folder}}"
+
+
 
 [doc("Make executables")]
 exec-permissions:

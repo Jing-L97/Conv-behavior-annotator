@@ -149,7 +149,7 @@ def eval_grammaticality_and_features(
 def eval_csv(args):
     # Load evaluation models
     childes_grammar_model, childes_grammar_model_tokenizer = load_childes_grammar_model(args.eval_model_path)
-    gec_model, gec_model_tokenizer = load_gec_model()
+    gec_model, gec_model_tokenizer = load_gec_model(args.eval_model_path)
 
     # Load feature resources
     word_info = pd.read_csv(args.word_info_path)

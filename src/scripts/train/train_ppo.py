@@ -795,7 +795,7 @@ def eval(model, tokenizer, config, trainer, ckpt_dir, final=False):
         childes_grammar_model, childes_grammar_model_tokenizer = load_childes_grammar_model(
             config.grammar_eval_model_path
         )
-        gec_model, gec_model_tokenizer = load_gec_model()
+        gec_model, gec_model_tokenizer = load_gec_model(config.grammar_eval_model_path)
         model_path = config.exp_dir
         scores_childes_grammar, scores_gec = eval_grammaticality_produced_utts(
             model,

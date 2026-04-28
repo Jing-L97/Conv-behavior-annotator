@@ -12,7 +12,7 @@ srun --ntasks=1 --cpus-per-task=8 --gres=gpu:1 --time=00:10:00 --account=eqb@a10
 srun --ntasks=1 --cpus-per-task=8 --gres=gpu:1 --time=00:10:00 --account=eqb@a100 --partition=gpu_p13 --pty bash
 
 srun --pty --account=eqb@a100 --nodes=1 --ntasks-per-node=1 \
-     --gres=gpu:1 --cpus-per-task=8 -C "a100" -t 00:10:00 bash -i
+     --gres=gpu:1 --cpus-per-task=4 -C "a100" -t 01:00:00 bash -i
 
 
 srun --pty --account=eqb@h100 --nodes=1 --ntasks-per-node=1 \

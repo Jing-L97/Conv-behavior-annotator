@@ -5,20 +5,20 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
-#SBATCH --time=12:00:00
+#SBATCH --time=6:00:00
 #SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/align_%A_%a.log
-#SBATCH --array=0-65%6
+#SBATCH --array=0-197%8
 
 # ── core experiment properties ────────────────────────────────────────────────
-DATA_SIZES=("1e5" "1e6" "1e7")
+DATA_SIZES=("1e6")
 
-PRETRAIN_SEEDS=(1 2)
+PRETRAIN_SEEDS=(3)
 
 REWARDS=(
     "topline"
 )
 
-FINETUNE_SEEDS=(2)
+FINETUNE_SEEDS=(1024)
 
 # ── dimension sizes ───────────────────────────────────────────────────────────
 N_DATA=${#DATA_SIZES[@]}          # 3
@@ -73,6 +73,10 @@ echo "  Reward seed  : $REWARD_SEED"
 echo "  EXP tag      : $EXP"
 echo "  EXP setting  : $EXP_SETTING"
 echo "========================================================"
+
+export HF_DATASETS_OFFLINE=0
+export TRANSFORMERS_OFFLINE=0
+export HF_HOME=/lustre/fsn1/projects/rech/eqb/uye44va/huggingface
 
 # ── launch ────────────────────────────────────────────────────────────────────
 bash ./train_ppo.sh \

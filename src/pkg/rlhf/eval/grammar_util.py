@@ -118,17 +118,6 @@ def eval_grammaticality_produced_utts(
     batch_size=50,
     output_max_length=DEFAULT_MAX_GENERATION_LEN,
 ):
-    # sanity check
-    # test_utts = ["I like this.", "like this.", "What is this?", "What this?", "He like that.", "He likes that.",
-    #              "They like him.", "Do this now.", "She likes himself.", "She likes herself.", "This is an apple.",
-    #              "This is a apple.", "Do you want an banana?", "Do you want a banana?"]
-    # batch = {"utts_decoded": test_utts}
-    # scores, scores_gec, utterances = compute_scores(batch, childes_grammar_model, childes_grammar_model_tokenizer,
-    #                                                 gec_model, gec_model_tokenizer, tokenizer)
-    # df = pd.DataFrame.from_dict({"utterances": batch['utts_decoded'], "scores": scores, "scores_gec": scores_gec})
-    # print("Sanity check for eval model: ")
-    # print(df.sort_values("scores"))
-
     all_scores_childes_grammar = []
     all_scores_gec = []
     sample_df = None
@@ -166,9 +155,10 @@ def eval_grammaticality_produced_utts(
     return all_scores_childes_grammar, all_scores_gec
 
 
-def load_gec_model():
-    gec_model = T5ForConditionalGeneration.from_pretrained("Unbabel/gec-t5_small").to(device)
-    gec_model_tokenizer = T5Tokenizer.from_pretrained("t5-small")
+def load_gec_model(eval_model_path):
+    hparams = yaml.safe_load(open(os.path.join(eval_model_path, "../gec.yaml")))
+    gec_model = T5ForConditionalGeneration.from_pretrained(hparams["model_name_or_path"]).to(device)
+    gec_model_tokenizer = T5Tokenizer.from_pretrained(hparams["tokenizer_name_or_path"])
     gec_model.eval()
     return gec_model, gec_model_tokenizer
 
