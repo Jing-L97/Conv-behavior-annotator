@@ -24,7 +24,6 @@ REWARDS=(
     "continuous_align_syntactic"
     "continuous_align_semantic"
     "align_semantic"
-    "topline"
     "sent_warmth" 
     "sent_engagement" 
     "sent_negativity" 
@@ -32,6 +31,7 @@ REWARDS=(
     "sent_approval" 
     "sent_caring" 
     "sent_curiosity"
+    "topline"
 )
 GEN_SEEDS=(3)
 

@@ -21,3 +21,10 @@ Table on random seeds
 | 1e7   | 1    | qpp61q7x |
 | 1e7   | 2    | m6s9vokb |
 | 1e7   | 3    | uu5rtja8 |
+
+
+Experiment design
+Dataset scale: 1e5, 1e6, 1e7
+Pretrain seeds: 1, 2, 3
+Fientune seeds: 3, 999, 1024
+Generation seeds: 

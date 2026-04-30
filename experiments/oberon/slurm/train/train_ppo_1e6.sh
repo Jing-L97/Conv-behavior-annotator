@@ -1,30 +1,40 @@
 #!/bin/bash
-#SBATCH --job-name=ppo_sent
+#SBATCH --job-name=ppo_1e6
 #SBATCH --export=ALL
-#SBATCH --partition=erc-dupoux
+#SBATCH --partition=gpu-p1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=6:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/sent_%A_%a.log
-#SBATCH --array=0-41
+#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/1e6_%A_%a.log
+#SBATCH --array=0-43%6
+
+export HF_DATASETS_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export WANDB_MODE=offline
 
 # ── core experiment properties ────────────────────────────────────────────────
-DATA_SIZES=("1e5" "1e6" "1e7")
+
+DATA_SIZES=("1e6")
 
 PRETRAIN_SEEDS=(1 2)
 
 REWARDS=(
-    "sent_warmth"
-    "sent_engagement"
-    "sent_negativity"
-    "sent_supportiveness"
-    "sent_approval"
-    "sent_caring"
-    "sent_curiosity"
+    "is_cr"
+    "is_acknowledgement"
+    "align_lexical_unigram"
+    "align_lexical_bigram"
+    "align_syntactic"
+    "continuous_align_lexical_unigram"
+    "continuous_align_lexical_bigram"
+    "continuous_align_syntactic"
+    "continuous_align_semantic"
+    "align_semantic"
+    "topline"
 )
 
-FINETUNE_SEEDS=(999)
+FINETUNE_SEEDS=(999 1024)
+
 
 # ── dimension sizes ───────────────────────────────────────────────────────────
 N_DATA=${#DATA_SIZES[@]}          # 3

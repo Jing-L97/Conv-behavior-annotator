@@ -1,24 +1,30 @@
 #!/bin/bash
-#SBATCH --job-name=ppo_align
+#SBATCH --job-name=ppo_1e7
 #SBATCH --export=ALL
-#SBATCH --partition=gpu-p1
+#SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=6:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/align_%A_%a.log
-#SBATCH --array=0-197%8
+#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/1e7_%A_%a.log
+#SBATCH --array=0-1
+
+export HF_DATASETS_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+export WANDB_MODE=offline
 
 # ── core experiment properties ────────────────────────────────────────────────
-DATA_SIZES=("1e6")
 
-PRETRAIN_SEEDS=(3)
+DATA_SIZES=("1e7")
+
+PRETRAIN_SEEDS=(1 2)
 
 REWARDS=(
-    "topline"
+    "sent_warmth"
 )
 
-FINETUNE_SEEDS=(1024)
+FINETUNE_SEEDS=(3)
+
 
 # ── dimension sizes ───────────────────────────────────────────────────────────
 N_DATA=${#DATA_SIZES[@]}          # 3
@@ -27,9 +33,8 @@ N_REWARDS=${#REWARDS[@]}          # 18
 N_FINETUNE=${#FINETUNE_SEEDS[@]}  # 4
 
 # ── paths ─────────────────────────────────────────────────────────────────────
-
-ROOT="/lustre/fsn1/projects/rech/eqb/uye44va/Feedback"
-WORKSPACE="${ROOT}/Conv-behavior-annotator/experiments/jz/script/train"
+ROOT="/scratch2/jliu/Feedback"
+WORKSPACE="${ROOT}/Conv-behavior-annotator/experiments/oberon/script/train"
 cd "$WORKSPACE" || { echo "ERROR: Cannot cd to $WORKSPACE"; exit 1; }
 
 # ── array index validation ────────────────────────────────────────────────────
@@ -73,10 +78,6 @@ echo "  Reward seed  : $REWARD_SEED"
 echo "  EXP tag      : $EXP"
 echo "  EXP setting  : $EXP_SETTING"
 echo "========================================================"
-
-export HF_DATASETS_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-export HF_HOME=/lustre/fsn1/projects/rech/eqb/uye44va/huggingface
 
 # ── launch ────────────────────────────────────────────────────────────────────
 bash ./train_ppo.sh \

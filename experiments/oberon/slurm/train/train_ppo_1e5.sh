@@ -1,38 +1,24 @@
 #!/bin/bash
-#SBATCH --job-name=ppo_align
+#SBATCH --job-name=ppo_1e5
 #SBATCH --export=ALL
-#SBATCH --partition=erc-dupoux
+#SBATCH --partition=gpu-p1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=6:00:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/align_%A_%a.log
-#SBATCH --array=0-65%3
+#SBATCH --output=/scratch2/jliu/Feedback/logs/ppo/1e5_%A_%a.log
+#SBATCH --array=0-1
 
 # ── core experiment properties ────────────────────────────────────────────────
-DATA_SIZES=("1e5" "1e6" "1e7")
+DATA_SIZES=("1e5")
 
 PRETRAIN_SEEDS=(1 2)
 
 REWARDS=(
-    "is_cr"
-    "is_acknowledgement"
-    "align_lexical_unigram"
-    "align_lexical_bigram"
-    "align_syntactic"
-    "continuous_align_lexical_unigram"
-    "continuous_align_lexical_bigram"
-    "continuous_align_syntactic"
-    "continuous_align_semantic"
-    "align_semantic"
-    "topline"
+    "sent_warmth"
 )
 
-FINETUNE_SEEDS=(999)
-DATA_SIZES=("1e7")
-PRETRAIN_SEEDS=(2)
-
-
+FINETUNE_SEEDS=(3)
 
 # ── dimension sizes ───────────────────────────────────────────────────────────
 N_DATA=${#DATA_SIZES[@]}          # 3
@@ -74,10 +60,6 @@ fi
 # ── experiment tags ───────────────────────────────────────────────────────────
 EXP_SETTING="${DATA_SIZE}_entropy_001_lm_loss_001_target_6"
 EXP="${DATA_SIZE}_reward_seed_${REWARD_SEED}_entropy_001_lm_loss_001_target_6"
-
-export HF_DATASETS_OFFLINE=1
-export TRANSFORMERS_OFFLINE=1
-
 
 # ── logging ───────────────────────────────────────────────────────────────────
 echo "========================================================"

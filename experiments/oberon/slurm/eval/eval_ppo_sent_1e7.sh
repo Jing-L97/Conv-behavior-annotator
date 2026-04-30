@@ -1,26 +1,20 @@
 #!/bin/bash
-#SBATCH --job-name=eval_sent
+#SBATCH --job-name=eval_sent_1e7
 #SBATCH --export=ALL
 #SBATCH --partition=erc-dupoux
 #SBATCH --gres=gpu:1
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
 #SBATCH --time=00:30:00
-#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_sent/%A_%a.log
-#SBATCH --array=0-125
+#SBATCH --output=/scratch2/jliu/Feedback/logs/eval/eval_sent/1e7_%A_%a.log
+#SBATCH --array=0-5
 
 # ── core experiment properties ────────────────────────────────────────────────
-DATA_SIZES=("1e5" "1e6" "1e7")
-FINETUNE_SEEDS=(999)
+DATA_SIZES=("1e7")
+FINETUNE_SEEDS=(3)
 PRETRAIN_SEEDS=(1 2)
 REWARDS=(
-    "sent_warmth" 
-    "sent_engagement" 
-    "sent_negativity" 
-    "sent_supportiveness" 
-    "sent_approval" 
-    "sent_caring" 
-    "sent_curiosity"
+    "sent_warmth"
 )
 GEN_SEEDS=(1 2 3)
 

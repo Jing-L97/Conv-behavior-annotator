@@ -220,7 +220,7 @@ def eval_models(args):
 
     # Load evaluation models once
     childes_grammar_model, childes_grammar_model_tokenizer = load_childes_grammar_model(args.eval_model_path)
-    gec_model, gec_model_tokenizer = load_gec_model(args.grammar_eval_model_path)
+    gec_model, gec_model_tokenizer = load_gec_model(args.eval_model_path)
 
     # Load feature resources once
     word_info = pd.read_csv(args.word_info_path)

@@ -13,4 +13,4 @@ ROOT="/scratch2/jliu/Feedback"
 SCRIPT_ROOT=$ROOT/"Conv-behavior-annotator/src/scripts"
 
 
-python -u $SCRIPT_ROOT/eval/collect_eval.py 
+python -u $SCRIPT_ROOT/eval/collect_eval.py --collect_utterances
