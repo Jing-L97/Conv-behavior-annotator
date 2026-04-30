@@ -8,7 +8,7 @@ To install the required packages, run:
 
 
 
-Table on random seeds 
+## Table on random seeds 
 
 | scale | seed | name     |
 |-------|------|----------|
@@ -23,8 +23,11 @@ Table on random seeds
 | 1e7   | 3    | uu5rtja8 |
 
 
-Experiment design
+## Experiment design
 Dataset scale: 1e5, 1e6, 1e7
+
 Pretrain seeds: 1, 2, 3
-Fientune seeds: 3, 999, 1024
-Generation seeds: 
+
+Finetune seeds: 3, 999, 1024
+
+Generation seeds: 1, 2, 3
