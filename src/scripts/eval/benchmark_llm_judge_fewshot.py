@@ -9,8 +9,8 @@ Protocol (Option C -- one structured call per utterance):
       remaining utterances are the TEST set (no sentence is both demo and test).
     - For each test utterance, send ONE fixed-prefix prompt (definitions + the same
       few-shot block + the utterance last) and ask the judge to mark true/false for
-      every category. The few-shot block is built once and reused on every call
-      (reproducible + prefix-cacheable by Ollama).
+      every category. HuggingFace inference can batch these prompts for GPU
+      throughput on a cluster.
     - Score per-category precision / recall / F1 against the gold labels and write
       two artifacts: a per-row predictions CSV and a per-category stats CSV.
 
@@ -23,13 +23,14 @@ Example
     python -m scripts.eval.benchmark_llm_judge_fewshot \
         --data_dir   ../sample_data \
         --output_dir runs/judge_fewshot \
-        --judge_model qwen3:8b --k_per_category 5
+        --judge_model Qwen/Qwen3-8B --k_per_category 5 --batch_size 16
 
 Dry run first (e.g. 20 test utterances):
     python -m scripts.eval.benchmark_llm_judge_fewshot --data_dir ../sample_data --limit 20
 """
 
 import argparse
+import dataclasses
 import os
 import time
 
@@ -46,9 +47,10 @@ from pkg.rlhf.eval.error_type_classifier import (
 )
 from pkg.rlhf.eval.llm_judge import (
     TAXONOMY,
-    JudgeConfig,
+    HFJudgeConfig,
     build_checklist_messages,
-    call_judge_once,
+    call_judge_hf_batch,
+    load_hf_judge,
     parse_checklist_json,
     render_fewshot_block,
 )
@@ -110,22 +112,56 @@ def sample_balanced_fewshot(label_lists, k=5, seed=1, n_multi_error=2):
 
 
 # ----------------------------
-# One checklist judgment (with retries; reuses call_judge_once)
+# One checklist judgment (with retries; reuses HF transport)
 # ----------------------------
-def judge_one(utterance, definitions, fewshot_block, config, client):
-    messages = build_checklist_messages(utterance, ERROR_TYPE_LABELS, definitions, fewshot_block)
-    last_raw = ""
-    for attempt in range(1, config.max_retries + 1):
+def _retry_config(config: HFJudgeConfig) -> HFJudgeConfig:
+    if not config.retry_do_sample:
+        return config
+    return dataclasses.replace(config, do_sample=True, temperature=config.retry_temperature)
+
+
+def _judge_batch(
+    utterance_batch: list[str],
+    definitions: dict[str, str],
+    fewshot_block: str,
+    config: HFJudgeConfig,
+    model: object,
+    tokenizer: object,
+) -> list[tuple[dict[str, int], str, bool]]:
+    """Judge a batch and retry malformed outputs with sampled decoding."""
+    messages_batch = [
+        build_checklist_messages(utterance, ERROR_TYPE_LABELS, definitions, fewshot_block)
+        for utterance in utterance_batch
+    ]
+    results = []
+    try:
+        raw_batch = call_judge_hf_batch(messages_batch, model, tokenizer, config)
+    except Exception as exc:  # noqa: BLE001 - judge must be robust
+        raw_batch = [f"{type(exc).__name__}: {exc}"] * len(messages_batch)
+
+    for raw in raw_batch:
+        preds, ok = parse_checklist_json(raw, ERROR_TYPE_LABELS, aliases=LABEL_ALIASES)
+        results.append([preds, raw, ok])
+
+    for attempt in range(2, config.max_retries + 1):
+        bad_positions = [pos for pos, (_, _, ok) in enumerate(results) if not ok]
+        if not bad_positions:
+            break
+        time.sleep(config.retry_backoff * (attempt - 1))
+        retry_messages = [messages_batch[pos] for pos in bad_positions]
+        retry_config = _retry_config(config)
         try:
-            last_raw = call_judge_once(messages, config, client=client)
-            preds, ok = parse_checklist_json(last_raw, ERROR_TYPE_LABELS, aliases=LABEL_ALIASES)
-            if ok:
-                return preds, last_raw, True
+            retry_raws = call_judge_hf_batch(retry_messages, model, tokenizer, retry_config)
         except Exception as exc:  # noqa: BLE001 - judge must be robust
-            last_raw = f"{type(exc).__name__}: {exc}"
-        if attempt < config.max_retries:
-            time.sleep(config.retry_backoff * attempt)
-    return {lab: 0 for lab in ERROR_TYPE_LABELS}, last_raw, False
+            retry_raws = [f"{type(exc).__name__}: {exc}"] * len(retry_messages)
+        for pos, raw in zip(bad_positions, retry_raws, strict=True):
+            preds, ok = parse_checklist_json(raw, ERROR_TYPE_LABELS, aliases=LABEL_ALIASES)
+            results[pos] = [preds, raw, ok]
+
+    return [
+        (preds if ok else {lab: 0 for lab in ERROR_TYPE_LABELS}, raw, ok)
+        for preds, raw, ok in results
+    ]
 
 
 # ----------------------------
@@ -157,37 +193,74 @@ def run(args):
         test_idx = test_idx[: args.limit]
         print(f"[limit] truncated test set to {len(test_idx)} utterances.")
 
-    config = JudgeConfig(model=args.judge_model, host=args.ollama_host, temperature=args.temperature)
-    client = None if args.dry_run else __import__("pkg.rlhf.eval.llm_judge", fromlist=["_get_client"])._get_client(config)
+    config = HFJudgeConfig(
+        model=args.judge_model,
+        dtype=args.dtype,
+        device=args.device,
+        max_new_tokens=args.max_new_tokens,
+        do_sample=args.do_sample,
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        enable_thinking=args.enable_thinking,
+        batch_size=max(1, args.batch_size),
+        max_retries=args.max_retries,
+        retry_backoff=args.retry_backoff,
+        retry_do_sample=not args.no_retry_sample,
+        retry_temperature=args.retry_temperature,
+        trust_remote_code=args.trust_remote_code,
+    )
+    if args.dry_run:
+        model, tokenizer = None, None
+    else:
+        model, tokenizer = load_hf_judge(config)
 
     # --- Inference sweep ---
     rows = []
     pred_matrix = np.zeros((len(test_idx), len(ERROR_TYPE_LABELS)), dtype=int)
-    for n, i in enumerate(test_idx):
+    processed = 0
+    next_log = args.log_every if args.log_every > 0 else len(test_idx)
+    for start in range(0, len(test_idx), config.batch_size):
+        batch_idx = test_idx[start : start + config.batch_size]
         if args.dry_run:
-            preds, raw, ok = {lab: 0 for lab in ERROR_TYPE_LABELS}, "(dry-run: no call)", True
+            batch_results = [
+                ({lab: 0 for lab in ERROR_TYPE_LABELS}, "(dry-run: no call)", True)
+                for _ in batch_idx
+            ]
         else:
-            preds, raw, ok = judge_one(utterances[i], definitions, fewshot_block, config, client)
+            batch_results = _judge_batch(
+                [utterances[i] for i in batch_idx],
+                definitions,
+                fewshot_block,
+                config,
+                model,
+                tokenizer,
+            )
 
-        pred_vec = np.array([preds[lab] for lab in ERROR_TYPE_LABELS], dtype=int)
-        pred_matrix[n] = pred_vec
-        gold_set = set(label_lists[i])
-        pred_set = set(multihot_to_labels(pred_vec))
+        for i, (preds, raw, ok) in zip(batch_idx, batch_results, strict=True):
+            n = processed
+            pred_vec = np.array([preds[lab] for lab in ERROR_TYPE_LABELS], dtype=int)
+            pred_matrix[n] = pred_vec
+            gold_set = set(label_lists[i])
+            pred_set = set(multihot_to_labels(pred_vec))
 
-        row = {"row_id": int(df.index[i]), "utterance": utterances[i]}
-        row["gold_labels"] = ", ".join(label_lists[i])
-        row["judge_labels"] = ", ".join(sorted(pred_set, key=ERROR_TYPE_LABELS.index))
-        for j, lab in enumerate(ERROR_TYPE_LABELS):
-            row[f"gold_{lab}"] = int(gold_matrix[i, j])
-            row[f"judge_{lab}"] = int(pred_vec[j])
-        row["exact_match"] = int(gold_set == pred_set)
-        row["judge_ok"] = int(ok)
-        row["judge_raw"] = raw
-        rows.append(row)
+            row = {"row_id": int(df.index[i]), "utterance": utterances[i]}
+            row["gold_labels"] = ", ".join(label_lists[i])
+            row["judge_labels"] = ", ".join(sorted(pred_set, key=ERROR_TYPE_LABELS.index))
+            for j, lab in enumerate(ERROR_TYPE_LABELS):
+                row[f"gold_{lab}"] = int(gold_matrix[i, j])
+                row[f"judge_{lab}"] = int(pred_vec[j])
+            row["exact_match"] = int(gold_set == pred_set)
+            row["judge_ok"] = int(ok)
+            row["judge_raw"] = raw
+            rows.append(row)
+            processed += 1
 
-        if (n + 1) % args.log_every == 0 or (n + 1) == len(test_idx):
+        if processed >= next_log or processed == len(test_idx):
             n_bad = sum(not r["judge_ok"] for r in rows)
-            print(f"[judge] {n + 1}/{len(test_idx)} | malformed so far: {n_bad}", flush=True)
+            print(f"[judge] {processed}/{len(test_idx)} | malformed so far: {n_bad}", flush=True)
+            while args.log_every > 0 and next_log <= processed:
+                next_log += args.log_every
 
     pred_df = pd.DataFrame(rows)
     pred_path = os.path.join(args.output_dir, "predictions.csv")
@@ -224,13 +297,25 @@ def get_args():
     p.add_argument("--speaker_code", type=str, default="[CHI]")
     p.add_argument("--k_per_category", type=int, default=5, help="Balanced few-shot demos per category.")
     p.add_argument("--n_multi_error", type=int, default=2, help="Extra demos guaranteed to be multi-label.")
-    p.add_argument("--judge_model", type=str, default="qwen3:8b")
-    p.add_argument("--ollama_host", type=str, default=None)
+    p.add_argument("--judge_model", type=str, default="Qwen/Qwen3-8B")
+    p.add_argument("--dtype", type=str, default="bfloat16", help="HF torch dtype: auto, bfloat16, float16, or float32.")
+    p.add_argument("--device", type=str, default="auto", help="HF device target, e.g. auto, cuda, cuda:0, cpu.")
+    p.add_argument("--max_new_tokens", type=int, default=256)
+    p.add_argument("--batch_size", type=int, default=16)
+    p.add_argument("--do_sample", action="store_true", help="Use sampled generation for the first pass.")
     p.add_argument("--temperature", type=float, default=0.0)
+    p.add_argument("--top_p", type=float, default=None)
+    p.add_argument("--top_k", type=int, default=None)
+    p.add_argument("--enable_thinking", action="store_true", help="Enable Qwen3 thinking mode in the chat template.")
+    p.add_argument("--max_retries", type=int, default=2)
+    p.add_argument("--retry_backoff", type=float, default=2.0)
+    p.add_argument("--retry_temperature", type=float, default=0.3)
+    p.add_argument("--no_retry_sample", action="store_true", help="Do not sample on malformed-output retries.")
+    p.add_argument("--trust_remote_code", action="store_true")
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--limit", type=int, default=0, help="Cap #test utterances (0 = all).")
     p.add_argument("--log_every", type=int, default=25)
-    p.add_argument("--dry_run", action="store_true", help="Build prompts/split but make no Ollama calls.")
+    p.add_argument("--dry_run", action="store_true", help="Build prompts/split but make no HF model calls.")
     args = p.parse_args()
     if args.speaker_code == "":
         args.speaker_code = None

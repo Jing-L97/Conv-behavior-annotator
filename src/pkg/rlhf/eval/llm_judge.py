@@ -7,9 +7,9 @@ kept as separate, independently testable functions:
                              category, and the coarse BLiMP-phenomenon map. The
                              judge prompt is rendered from this spec, so the prompt
                              and any future human-annotation guide stay identical.
-    2. OLLAMA CALL LOGIC  -- builds messages, calls `ollama.chat` (JSON mode,
-                             temperature 0, retries with backoff) and parses the
-                             reply defensively.
+    2. JUDGE CALL LOGIC   -- builds messages and calls either `ollama.chat` or
+                             a local HuggingFace causal LM, then parses the reply
+                             defensively.
     3. PIPELINE ADAPTER   -- maps a parsed result into the wide CSV row format used
                              by the rest of the eval pipeline (one binary column per
                              error category) plus an aggregate summary dict.
@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import time
 from collections import OrderedDict
 
@@ -461,6 +462,176 @@ def call_judge_once(messages: list[dict], config: JudgeConfig, client=None) -> s
     else:
         response = client.chat(**kwargs)
     return response["message"]["content"]
+
+
+# ---------------------------------------------------------------------------
+# 2b. HUGGINGFACE CALL LOGIC
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class HFJudgeConfig:
+    """Runtime configuration for a HuggingFace local judge model."""
+
+    model: str = "Qwen/Qwen3-8B"
+    dtype: str = "bfloat16"
+    device: str = "auto"
+    max_new_tokens: int = 256
+    do_sample: bool = False
+    temperature: float = 0.0
+    top_p: float | None = None
+    top_k: int | None = None
+    enable_thinking: bool = False
+    batch_size: int = 16
+    max_retries: int = 2
+    retry_backoff: float = 2.0
+    retry_do_sample: bool = True
+    retry_temperature: float = 0.3
+    trust_remote_code: bool = False
+
+
+def _version_tuple(version: str) -> tuple[int, int, int]:
+    """Return a coarse comparable version tuple without importing packaging."""
+    parts = []
+    for part in version.split(".")[:3]:
+        digits = ""
+        for char in part:
+            if char.isdigit():
+                digits += char
+            else:
+                break
+        parts.append(int(digits or 0))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _resolve_torch_dtype(dtype: str, torch) -> object:
+    """Map a CLI dtype string to the value expected by transformers."""
+    normalized = (dtype or "auto").lower()
+    if normalized == "auto":
+        return "auto"
+    aliases = {
+        "bf16": "bfloat16",
+        "bfloat16": "bfloat16",
+        "fp16": "float16",
+        "float16": "float16",
+        "half": "float16",
+        "fp32": "float32",
+        "float32": "float32",
+        "float": "float32",
+    }
+    attr = aliases.get(normalized)
+    if attr is None or not hasattr(torch, attr):
+        raise ValueError(f"Unsupported HF dtype '{dtype}'. Use auto, bfloat16, float16, or float32.")
+    return getattr(torch, attr)
+
+
+def load_hf_judge(config: HFJudgeConfig) -> tuple[object, object]:
+    """Load a HuggingFace causal LM judge once and return ``(model, tokenizer)``."""
+    import torch  # local import: not needed for taxonomy/adapter unit tests
+    import transformers
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    if config.model.lower().startswith("qwen/qwen3") and _version_tuple(transformers.__version__) < (4, 51, 0):
+        raise RuntimeError(
+            f"{config.model} requires transformers>=4.51.0; found {transformers.__version__}. "
+            "Use the newer cluster environment before running the HF judge."
+        )
+
+    tokenizer = AutoTokenizer.from_pretrained(config.model, trust_remote_code=config.trust_remote_code)
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    load_kwargs = {
+        "torch_dtype": _resolve_torch_dtype(config.dtype, torch),
+        "trust_remote_code": config.trust_remote_code,
+    }
+    if config.device == "auto":
+        load_kwargs["device_map"] = "auto"
+
+    model = AutoModelForCausalLM.from_pretrained(config.model, **load_kwargs)
+    if config.device != "auto":
+        model = model.to(config.device)
+    model.eval()
+    return model, tokenizer
+
+
+def _format_hf_chat(messages: list[dict], tokenizer, config: HFJudgeConfig) -> str:
+    """Render chat messages with the model's tokenizer chat template."""
+    try:
+        return tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=config.enable_thinking,
+        )
+    except TypeError:
+        if config.enable_thinking:
+            raise
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+
+def _strip_thinking_blocks(text: str) -> str:
+    """Remove Qwen-style thinking blocks before JSON parsing."""
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
+    if "</think>" in cleaned:
+        cleaned = cleaned.rsplit("</think>", 1)[-1].strip()
+    if cleaned.startswith("<think>"):
+        start = cleaned.find("{")
+        if start != -1:
+            cleaned = cleaned[start:]
+    return cleaned.strip()
+
+
+def _hf_generation_kwargs(config: HFJudgeConfig, tokenizer) -> dict:
+    """Build kwargs for ``model.generate``."""
+    kwargs = {
+        "max_new_tokens": config.max_new_tokens,
+        "do_sample": config.do_sample,
+        "pad_token_id": tokenizer.pad_token_id,
+    }
+    if tokenizer.eos_token_id is not None:
+        kwargs["eos_token_id"] = tokenizer.eos_token_id
+    if config.do_sample:
+        if config.temperature > 0:
+            kwargs["temperature"] = config.temperature
+        if config.top_p is not None:
+            kwargs["top_p"] = config.top_p
+        if config.top_k is not None:
+            kwargs["top_k"] = config.top_k
+    return kwargs
+
+
+def call_judge_hf_batch(messages_batch: list[list[dict]], model, tokenizer, config: HFJudgeConfig) -> list[str]:
+    """Call a HuggingFace judge for a batch of chat messages."""
+    import torch  # local import: not needed for taxonomy/adapter unit tests
+
+    if not messages_batch:
+        return []
+
+    texts = [_format_hf_chat(messages, tokenizer, config) for messages in messages_batch]
+    model_inputs = tokenizer(texts, return_tensors="pt", padding=True)
+    model_device = getattr(model, "device", None)
+    if model_device is not None:
+        model_inputs = model_inputs.to(model_device)
+
+    input_len = model_inputs["input_ids"].shape[1]
+    with torch.inference_mode():
+        generated = model.generate(**model_inputs, **_hf_generation_kwargs(config, tokenizer))
+
+    raw_outputs = []
+    for output_ids in generated[:, input_len:]:
+        text = tokenizer.decode(output_ids, skip_special_tokens=True)
+        raw_outputs.append(_strip_thinking_blocks(text))
+    return raw_outputs
+
+
+def call_judge_hf(messages: list[dict], model, tokenizer, config: HFJudgeConfig) -> str:
+    """Call a HuggingFace judge for one chat message list."""
+    return call_judge_hf_batch([messages], model, tokenizer, config)[0]
 
 
 def parse_judge_json(raw: str) -> dict:
