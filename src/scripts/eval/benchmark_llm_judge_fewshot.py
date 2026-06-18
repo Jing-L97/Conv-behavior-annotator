@@ -2,8 +2,9 @@
 """Benchmark the LLM-as-judge against human labels with balanced few-shot prompting.
 
 Protocol (Option C -- one structured call per utterance):
-    - Load the human-annotated child utterances (only [CHI] rows that have labels;
-      every such row is ungrammatical).
+    - Load the human-annotated child utterances. By default only [CHI] rows that
+      have labels are kept; with --include_unlabeled, empty-label rows are kept
+      and treated as grammatical/no-error examples.
     - Sample a BALANCED few-shot pool: up to K demos per category (rare categories
       first), each demo rendered as a full per-category true/false checklist. The
       remaining utterances are the TEST set (no sentence is both demo and test).
@@ -51,7 +52,7 @@ from pkg.rlhf.eval.llm_judge import (
     build_checklist_messages,
     call_judge_hf_batch,
     load_hf_judge,
-    parse_checklist_json,
+    parse_checklist_json_with_rationale,
     render_fewshot_block,
 )
 
@@ -72,8 +73,8 @@ def build_definitions() -> dict:
 # ----------------------------
 # Balanced few-shot sampling
 # ----------------------------
-def sample_balanced_fewshot(label_lists, k=5, seed=1, n_multi_error=2):
-    """Pick ~k demo sentences per category (rare-first), plus a few multi-error demos.
+def sample_balanced_fewshot(label_lists, k=5, seed=1, n_multi_error=2, n_grammatical=5):
+    """Pick ~k demos per category, plus multi-error and no-error demos.
 
     Returns (fewshot_idx sorted list, test_idx sorted list). Each sentence appears
     in at most one set. ``label_lists`` is the per-row list of gold canonical labels.
@@ -106,6 +107,12 @@ def sample_balanced_fewshot(label_lists, k=5, seed=1, n_multi_error=2):
         for i in cands[: n_multi_error - have_multi]:
             chosen.add(i)
 
+    if n_grammatical > 0:
+        cands = [i for i in range(n) if i not in chosen and not label_lists[i]]
+        rng.shuffle(cands)
+        for i in cands[:n_grammatical]:
+            chosen.add(i)
+
     fewshot_idx = sorted(chosen)
     test_idx = [i for i in range(n) if i not in chosen]
     return fewshot_idx, test_idx
@@ -120,6 +127,13 @@ def _retry_config(config: HFJudgeConfig) -> HFJudgeConfig:
     return dataclasses.replace(config, do_sample=True, temperature=config.retry_temperature)
 
 
+def _format_label_summary(label_list: list[str], is_ungrammatical: bool) -> str:
+    """Return the compact label summary used in the predictions CSV."""
+    if label_list:
+        return ", ".join(label_list)
+    return "unclassified_error" if is_ungrammatical else "grammatical"
+
+
 def _judge_batch(
     utterance_batch: list[str],
     definitions: dict[str, str],
@@ -127,7 +141,7 @@ def _judge_batch(
     config: HFJudgeConfig,
     model: object,
     tokenizer: object,
-) -> list[tuple[dict[str, int], str, bool]]:
+) -> list[tuple[dict[str, int], str, bool, str, bool]]:
     """Judge a batch and retry malformed outputs with sampled decoding."""
     messages_batch = [
         build_checklist_messages(utterance, ERROR_TYPE_LABELS, definitions, fewshot_block)
@@ -140,11 +154,13 @@ def _judge_batch(
         raw_batch = [f"{type(exc).__name__}: {exc}"] * len(messages_batch)
 
     for raw in raw_batch:
-        preds, ok = parse_checklist_json(raw, ERROR_TYPE_LABELS, aliases=LABEL_ALIASES)
-        results.append([preds, raw, ok])
+        preds, rationale, is_ungrammatical, ok = parse_checklist_json_with_rationale(
+            raw, ERROR_TYPE_LABELS, aliases=LABEL_ALIASES
+        )
+        results.append([preds, rationale, is_ungrammatical, raw, ok])
 
     for attempt in range(2, config.max_retries + 1):
-        bad_positions = [pos for pos, (_, _, ok) in enumerate(results) if not ok]
+        bad_positions = [pos for pos, (_, _, _, _, ok) in enumerate(results) if not ok]
         if not bad_positions:
             break
         time.sleep(config.retry_backoff * (attempt - 1))
@@ -155,12 +171,14 @@ def _judge_batch(
         except Exception as exc:  # noqa: BLE001 - judge must be robust
             retry_raws = [f"{type(exc).__name__}: {exc}"] * len(retry_messages)
         for pos, raw in zip(bad_positions, retry_raws, strict=True):
-            preds, ok = parse_checklist_json(raw, ERROR_TYPE_LABELS, aliases=LABEL_ALIASES)
-            results[pos] = [preds, raw, ok]
+            preds, rationale, is_ungrammatical, ok = parse_checklist_json_with_rationale(
+                raw, ERROR_TYPE_LABELS, aliases=LABEL_ALIASES
+            )
+            results[pos] = [preds, rationale, is_ungrammatical, raw, ok]
 
     return [
-        (preds if ok else {lab: 0 for lab in ERROR_TYPE_LABELS}, raw, ok)
-        for preds, raw, ok in results
+        (preds if ok else {lab: 0 for lab in ERROR_TYPE_LABELS}, rationale, is_ungrammatical if ok else False, raw, ok)
+        for preds, rationale, is_ungrammatical, raw, ok in results
     ]
 
 
@@ -170,12 +188,21 @@ def _judge_batch(
 def run(args):
     os.makedirs(args.output_dir, exist_ok=True)
 
-    df = load_annotated_dir(args.data_dir, utt_column=args.utt_column, speaker_code=args.speaker_code)
+    df = load_annotated_dir(
+        args.data_dir,
+        utt_column=args.utt_column,
+        speaker_code=args.speaker_code,
+        require_labels=not args.include_unlabeled,
+    )
     gold_matrix, label_lists = encode_targets(df)
     utterances = df[args.utt_column].astype(str).str.strip().tolist()
 
     fewshot_idx, test_idx = sample_balanced_fewshot(
-        label_lists, k=args.k_per_category, seed=args.seed, n_multi_error=args.n_multi_error
+        label_lists,
+        k=args.k_per_category,
+        seed=args.seed,
+        n_multi_error=args.n_multi_error,
+        n_grammatical=args.n_grammatical_fewshot,
     )
     print(f"[split] few-shot demos: {len(fewshot_idx)} | test utterances: {len(test_idx)}")
 
@@ -224,7 +251,7 @@ def run(args):
         batch_idx = test_idx[start : start + config.batch_size]
         if args.dry_run:
             batch_results = [
-                ({lab: 0 for lab in ERROR_TYPE_LABELS}, "(dry-run: no call)", True)
+                ({lab: 0 for lab in ERROR_TYPE_LABELS}, "", False, "(dry-run: no call)", True)
                 for _ in batch_idx
             ]
         else:
@@ -237,21 +264,24 @@ def run(args):
                 tokenizer,
             )
 
-        for i, (preds, raw, ok) in zip(batch_idx, batch_results, strict=True):
+        for i, (preds, rationale, is_ungrammatical, raw, ok) in zip(batch_idx, batch_results, strict=True):
             n = processed
             pred_vec = np.array([preds[lab] for lab in ERROR_TYPE_LABELS], dtype=int)
             pred_matrix[n] = pred_vec
             gold_set = set(label_lists[i])
             pred_set = set(multihot_to_labels(pred_vec))
+            gold_is_ungrammatical = bool(gold_set)
 
             row = {"row_id": int(df.index[i]), "utterance": utterances[i]}
-            row["gold_labels"] = ", ".join(label_lists[i])
-            row["judge_labels"] = ", ".join(sorted(pred_set, key=ERROR_TYPE_LABELS.index))
+            row["gold_is_ungrammatical"] = int(gold_is_ungrammatical)
+            row["judge_is_ungrammatical"] = int(is_ungrammatical)
+            row["gold_labels"] = _format_label_summary(label_lists[i], gold_is_ungrammatical)
             for j, lab in enumerate(ERROR_TYPE_LABELS):
                 row[f"gold_{lab}"] = int(gold_matrix[i, j])
                 row[f"judge_{lab}"] = int(pred_vec[j])
-            row["exact_match"] = int(gold_set == pred_set)
+            row["exact_match"] = int(gold_is_ungrammatical == is_ungrammatical and gold_set == pred_set)
             row["judge_ok"] = int(ok)
+            row["judge_rationale"] = rationale
             row["judge_raw"] = raw
             rows.append(row)
             processed += 1
@@ -297,6 +327,8 @@ def get_args():
     p.add_argument("--speaker_code", type=str, default="[CHI]")
     p.add_argument("--k_per_category", type=int, default=5, help="Balanced few-shot demos per category.")
     p.add_argument("--n_multi_error", type=int, default=2, help="Extra demos guaranteed to be multi-label.")
+    p.add_argument("--n_grammatical_fewshot", type=int, default=5, help="No-error demos when unlabeled rows are kept.")
+    p.add_argument("--include_unlabeled", action="store_true", help="Keep empty-label rows as grammatical/no-error rows.")
     p.add_argument("--judge_model", type=str, default="Qwen/Qwen3-8B")
     p.add_argument("--dtype", type=str, default="bfloat16", help="HF torch dtype: auto, bfloat16, float16, or float32.")
     p.add_argument("--device", type=str, default="auto", help="HF device target, e.g. auto, cuda, cuda:0, cpu.")

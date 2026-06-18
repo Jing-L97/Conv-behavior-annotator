@@ -303,13 +303,17 @@ def build_messages(utterance: str, context: str | None = None) -> list[dict]:
 
 CHECKLIST_SYSTEM_PROMPT = (
     "You are a linguist annotating the grammatical errors in an utterance produced "
-    "by a young child. The utterance is known to contain at least one grammatical "
-    "error. For EACH category in the taxonomy you must decide whether an error of "
-    "that category is present. Judge only grammar (morphology/syntax). Do NOT "
-    "penalize childish phonological spellings or informal/dialectal contractions "
+    "by a young child. The utterance may or may not contain a grammatical error. "
+    "In one structured judgment, first decide whether any grammar error is present, "
+    "then mark which categories apply. Judge only grammar (morphology/syntax). Do "
+    "NOT penalize childish phonological spellings or informal/dialectal contractions "
     "(e.g. 'wanna', 'gonna', 'doggie'); those are not grammatical errors. Multiple "
-    "categories may be true. Respond with a single JSON object that maps every "
-    "category name to true or false, and nothing else."
+    "categories may be true. Respond with a single JSON object that includes an "
+    "is_ungrammatical boolean, maps every category name to true or false, and "
+    "includes one short rationale sentence. The rationale must mention the specific "
+    "word or phrase in the utterance that drove the decision and the grammatical "
+    "reason; do not give a generic category-only explanation and do not say "
+    "'annotated as'."
 )
 
 
@@ -321,19 +325,71 @@ def render_checklist_definitions(labels: list[str], definitions: dict[str, str])
     return "\n".join(lines)
 
 
+def _checklist_object(labels: list[str], true_labels: list[str], rationale: str | None = None) -> dict:
+    """Build one checklist JSON object in stable key order."""
+    truth = set(true_labels)
+    obj = {"is_ungrammatical": bool(truth)}
+    obj.update({label: (label in truth) for label in labels})
+    if rationale is not None:
+        obj["rationale"] = rationale
+    return obj
+
+
+def render_rationale_style_examples(labels: list[str]) -> str:
+    """Render handcrafted examples that teach concrete rationale style."""
+    examples = [
+        (
+            "this be a cave",
+            ["sv_agreement"],
+            'The word "be" does not agree with the singular subject "this"; the copula "is" is expected.',
+        ),
+        (
+            "it broken",
+            ["verb"],
+            'The phrase "it broken" is missing the copula "is" before the predicate "broken".',
+        ),
+        (
+            "me want it",
+            ["subject"],
+            'The word "me" is used as the subject, where the subject pronoun "I" is expected.',
+        ),
+        (
+            "he don't want it",
+            ["sv_agreement"],
+            'The auxiliary "don\'t" does not agree with the third-person subject "he"; "doesn\'t" is expected.',
+        ),
+        (
+            "this uh is a cave",
+            [],
+            'The word "uh" is a hesitation, and the clause "this is a cave" has no morphology/syntax error.',
+        ),
+    ]
+
+    lines = [
+        "RATIONALE STYLE EXAMPLES (copy this specificity, not the exact labels):",
+        "",
+    ]
+    for utterance, true_labels, rationale in examples:
+        lines.append(f'Utterance: "{utterance}"')
+        lines.append(json.dumps(_checklist_object(labels, true_labels, rationale)))
+        lines.append("")
+    return "\n".join(lines)
+
+
 def render_fewshot_block(examples: list[tuple[str, list[str]]], labels: list[str]) -> str:
     """Render demos as full per-category checklists.
 
-    ``examples`` is a list of ``(utterance, true_labels)``. Each demo shows the
-    complete JSON object (mostly ``false``) so the model is calibrated toward
-    ``false`` by default and learns the exact output shape.
+    ``examples`` is a list of ``(utterance, true_labels)``. The balanced demos show
+    category decisions only; handcrafted examples above teach rationale style.
     """
-    lines = ["WORKED EXAMPLES (each shows the full checklist for one utterance):", ""]
+    lines = [
+        render_rationale_style_examples(labels),
+        "BALANCED LABEL EXAMPLES (use these for category calibration; rationales are intentionally omitted):",
+        "",
+    ]
     for utterance, true_labels in examples:
-        truth = set(true_labels)
-        obj = {label: (label in truth) for label in labels}
         lines.append(f'Utterance: "{utterance}"')
-        lines.append(json.dumps(obj))
+        lines.append(json.dumps(_checklist_object(labels, true_labels)))
         lines.append("")
     return "\n".join(lines)
 
@@ -346,9 +402,19 @@ def build_checklist_messages(
 ) -> list[dict]:
     """Build the chat messages for one checklist judgment (Option C)."""
     schema = (
-        "OUTPUT: a single JSON object whose keys are EXACTLY these category names: "
+        "OUTPUT: a single JSON object with an is_ungrammatical boolean and category "
+        "keys EXACTLY these names: "
         + ", ".join(labels)
-        + ". Each value must be true or false. Output JSON only, no prose."
+        + '. Each category value must be true or false. Also include a "rationale" '
+        "string containing exactly one short sentence. The rationale must quote or "
+        "name the concrete word/phrase from the utterance and explain the grammar "
+        "decision, e.g. what form is missing, extra, miscased, mismatched, or why a "
+        "suspicious word is only a disfluency/repetition and not a grammar error. "
+        "Do not write generic rationales such as 'no grammatical errors in the "
+        "specified categories' or 'the child form is annotated as other.' If "
+        "is_ungrammatical is false, all category values must be false. If "
+        "is_ungrammatical is true, mark every applicable error category true. "
+        "Output JSON only, no prose."
     )
     user = "\n".join(
         [
@@ -366,23 +432,40 @@ def build_checklist_messages(
     ]
 
 
-def parse_checklist_json(
-    raw: str, labels: list[str], aliases: dict[str, str] | None = None
-) -> tuple[dict[str, int], bool]:
-    """Defensively parse a per-category boolean object.
+def _single_sentence(text: object) -> str:
+    """Normalize a model rationale to one sentence."""
+    rationale = " ".join(str(text or "").split())
+    if not rationale:
+        return ""
+    match = re.match(r"(.+?[.!?])(?:\s|$)", rationale)
+    return match.group(1) if match else rationale
 
-    Returns ``(preds, ok)`` where ``preds`` maps every label in ``labels`` to 0/1
-    (defaulting to 0 for missing keys) and ``ok`` is False if nothing parseable was
-    found. Keys are normalized + alias-resolved so e.g. "progressive" maps onto
-    "present_progressive".
-    """
+
+def _json_bool(value: object) -> bool | None:
+    """Parse JSON-ish booleans while preserving missing/unknown as None."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes"}:
+        return True
+    if text in {"false", "0", "no"}:
+        return False
+    return None
+
+
+def parse_checklist_json_with_rationale(
+    raw: str, labels: list[str], aliases: dict[str, str] | None = None
+) -> tuple[dict[str, int], str, bool, bool]:
+    """Defensively parse a checklist object plus optional rationale."""
     aliases = aliases or {}
     preds = {label: 0 for label in labels}
     label_set = set(labels)
 
     text = (raw or "").strip()
     if not text:
-        return preds, False
+        return preds, "", False, False
     if text.startswith("```"):
         text = text.strip("`")
         if text.lower().startswith("json"):
@@ -394,17 +477,36 @@ def parse_checklist_json(
     try:
         data = json.loads(text)
     except (ValueError, TypeError):
-        return preds, False
+        return preds, "", False, False
     if not isinstance(data, dict):
-        return preds, False
+        return preds, "", False, False
 
+    is_ungrammatical = _json_bool(data.get("is_ungrammatical"))
     for key, value in data.items():
         norm = str(key).strip().lower().replace(" ", "_").replace("-", "_")
         norm = aliases.get(norm, norm)
         if norm in label_set:
             truthy = value is True or str(value).strip().lower() in {"true", "1", "yes"}
             preds[norm] = 1 if truthy else 0
-    return preds, True
+    if is_ungrammatical is None:
+        is_ungrammatical = any(preds.values())
+    elif not is_ungrammatical:
+        preds = {label: 0 for label in labels}
+    return preds, _single_sentence(data.get("rationale", "")), bool(is_ungrammatical), True
+
+
+def parse_checklist_json(
+    raw: str, labels: list[str], aliases: dict[str, str] | None = None
+) -> tuple[dict[str, int], bool]:
+    """Defensively parse a per-category boolean object.
+
+    Returns ``(preds, ok)`` where ``preds`` maps every label in ``labels`` to 0/1
+    (defaulting to 0 for missing keys) and ``ok`` is False if nothing parseable was
+    found. Keys are normalized + alias-resolved so e.g. "progressive" maps onto
+    "present_progressive".
+    """
+    preds, _rationale, _is_ungrammatical, ok = parse_checklist_json_with_rationale(raw, labels, aliases=aliases)
+    return preds, ok
 
 
 # ---------------------------------------------------------------------------
