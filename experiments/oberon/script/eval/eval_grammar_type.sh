@@ -19,7 +19,7 @@ python -u $SCRIPT_ROOT/eval/benchmark_llm_judge_fewshot.py \
     --judge_model $JUDGE_MODEL \
     --dtype bfloat16 \
     --device auto \
-    --batch_size 16 \
-    --n_grammatical_fewshot 2 \
-    --limit 1000
+    --batch_size 32 \
+    --n_grammatical_fewshot 5 \
+    --limit 10000
 

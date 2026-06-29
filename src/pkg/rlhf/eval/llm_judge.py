@@ -291,45 +291,55 @@ def build_messages(utterance: str, context: str | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# 1b. CHECKLIST MODE (Option C)  -- per-category true/false in one structured call
+# 1b. LABEL-CHOICE MODE  -- grammaticality first, then 1-2 labels
 # ---------------------------------------------------------------------------
 #
 # Used by the few-shot benchmark (scripts/eval/benchmark_llm_judge_fewshot.py). The
 # deployed free-form judge above is left untouched; these are parallel builders/
-# parser for a different output contract: a single JSON object that maps EVERY
-# category to a boolean. They are generic over a caller-supplied ``labels`` list +
+# parser for a different output contract: first decide whether an utterance is
+# grammatical; if it is ungrammatical, choose only the 1-2 best labels from the
+# supplied definitions. They are generic over a caller-supplied ``labels`` list +
 # ``definitions`` map, so the benchmark can run them over the data's label space
 # (which uses "present_progressive") without coupling this module to that spelling.
 
-CHECKLIST_SYSTEM_PROMPT = (
+MAX_LABEL_CHOICE_LABELS = 2
+
+LABEL_CHOICE_SYSTEM_PROMPT = (
     "You are a linguist annotating the grammatical errors in an utterance produced "
     "by a young child. The utterance may or may not contain a grammatical error. "
     "In one structured judgment, first decide whether any grammar error is present, "
-    "then mark which categories apply. Judge only grammar (morphology/syntax). Do "
+    "then choose the best one or two error categories only if an error is present. "
+    "Judge only grammar (morphology/syntax). Do "
     "NOT penalize childish phonological spellings or informal/dialectal contractions "
-    "(e.g. 'wanna', 'gonna', 'doggie'); those are not grammatical errors. Multiple "
-    "categories may be true. Respond with a single JSON object that includes an "
-    "is_ungrammatical boolean, maps every category name to true or false, and "
-    "includes one short rationale sentence. The rationale must mention the specific "
-    "word or phrase in the utterance that drove the decision and the grammatical "
-    "reason; do not give a generic category-only explanation and do not say "
-    "'annotated as'."
+    "(e.g. 'wanna', 'gonna', 'doggie'); those are not grammatical errors. Respond "
+    "with a single JSON object that includes an is_ungrammatical boolean, a labels "
+    "array, and one short rationale sentence. If the utterance is grammatical, the "
+    "labels array must be empty. If it is ungrammatical, the labels array must "
+    "contain only one or two category names from the definitions. The rationale "
+    "must mention the specific word or phrase in the utterance that drove the "
+    "decision and the grammatical reason; do not give a generic category-only "
+    "explanation and do not say 'annotated as'."
 )
 
 
-def render_checklist_definitions(labels: list[str], definitions: dict[str, str]) -> str:
-    """Render the category definitions for checklist mode over ``labels``."""
-    lines = ["GRAMMATICAL ERROR CATEGORIES (decide true/false for each):"]
+def render_label_choice_definitions(labels: list[str], definitions: dict[str, str]) -> str:
+    """Render the category definitions for label-choice mode over ``labels``."""
+    lines = ["GRAMMATICAL ERROR CATEGORIES (choose at most two only if ungrammatical):"]
     for i, label in enumerate(labels, start=1):
         lines.append(f"{i:>2}. {label}: {definitions.get(label, '')}")
     return "\n".join(lines)
 
 
-def _checklist_object(labels: list[str], true_labels: list[str], rationale: str | None = None) -> dict:
-    """Build one checklist JSON object in stable key order."""
+def _ordered_label_choices(labels: list[str], true_labels: list[str]) -> list[str]:
+    """Return valid label choices in taxonomy order, capped at the prompt limit."""
     truth = set(true_labels)
-    obj = {"is_ungrammatical": bool(truth)}
-    obj.update({label: (label in truth) for label in labels})
+    return [label for label in labels if label in truth][:MAX_LABEL_CHOICE_LABELS]
+
+
+def _label_choice_object(labels: list[str], true_labels: list[str], rationale: str | None = None) -> dict:
+    """Build one label-choice JSON object in stable key order."""
+    chosen = _ordered_label_choices(labels, true_labels)
+    obj = {"is_ungrammatical": bool(chosen), "labels": chosen}
     if rationale is not None:
         obj["rationale"] = rationale
     return obj
@@ -371,16 +381,17 @@ def render_rationale_style_examples(labels: list[str]) -> str:
     ]
     for utterance, true_labels, rationale in examples:
         lines.append(f'Utterance: "{utterance}"')
-        lines.append(json.dumps(_checklist_object(labels, true_labels, rationale)))
+        lines.append(json.dumps(_label_choice_object(labels, true_labels, rationale)))
         lines.append("")
     return "\n".join(lines)
 
 
 def render_fewshot_block(examples: list[tuple[str, list[str]]], labels: list[str]) -> str:
-    """Render demos as full per-category checklists.
+    """Render demos as compact grammaticality + label-choice examples.
 
-    ``examples`` is a list of ``(utterance, true_labels)``. The balanced demos show
-    category decisions only; handcrafted examples above teach rationale style.
+    ``examples`` is a list of ``(utterance, true_labels)``. The balanced demos
+    show the same compact output contract used at inference time; handcrafted
+    examples above teach rationale style.
     """
     lines = [
         render_rationale_style_examples(labels),
@@ -389,36 +400,37 @@ def render_fewshot_block(examples: list[tuple[str, list[str]]], labels: list[str
     ]
     for utterance, true_labels in examples:
         lines.append(f'Utterance: "{utterance}"')
-        lines.append(json.dumps(_checklist_object(labels, true_labels)))
+        lines.append(json.dumps(_label_choice_object(labels, true_labels)))
         lines.append("")
     return "\n".join(lines)
 
 
-def build_checklist_messages(
+def build_label_choice_messages(
     utterance: str,
     labels: list[str],
     definitions: dict[str, str],
     fewshot_block: str,
 ) -> list[dict]:
-    """Build the chat messages for one checklist judgment (Option C)."""
+    """Build the chat messages for one label-choice judgment."""
     schema = (
-        "OUTPUT: a single JSON object with an is_ungrammatical boolean and category "
-        "keys EXACTLY these names: "
+        "OUTPUT: a single JSON object with exactly these keys: "
+        '"is_ungrammatical", "labels", and "rationale". First decide whether the '
+        'utterance is grammatical. If "is_ungrammatical" is false, "labels" must '
+        'be an empty array. If "is_ungrammatical" is true, "labels" must contain '
+        "only the best one or two category names, chosen EXACTLY from this list: "
         + ", ".join(labels)
-        + '. Each category value must be true or false. Also include a "rationale" '
-        "string containing exactly one short sentence. The rationale must quote or "
+        + '. Do not return boolean values for each category. The "rationale" '
+        "must contain exactly one short sentence. The rationale must quote or "
         "name the concrete word/phrase from the utterance and explain the grammar "
         "decision, e.g. what form is missing, extra, miscased, mismatched, or why a "
         "suspicious word is only a disfluency/repetition and not a grammar error. "
         "Do not write generic rationales such as 'no grammatical errors in the "
-        "specified categories' or 'the child form is annotated as other.' If "
-        "is_ungrammatical is false, all category values must be false. If "
-        "is_ungrammatical is true, mark every applicable error category true. "
-        "Output JSON only, no prose."
+        "specified categories' or 'the child form is annotated as other.' Output "
+        "JSON only, no prose."
     )
     user = "\n".join(
         [
-            render_checklist_definitions(labels, definitions),
+            render_label_choice_definitions(labels, definitions),
             "",
             fewshot_block,
             schema,
@@ -427,7 +439,7 @@ def build_checklist_messages(
         ]
     )
     return [
-        {"role": "system", "content": CHECKLIST_SYSTEM_PROMPT},
+        {"role": "system", "content": LABEL_CHOICE_SYSTEM_PROMPT},
         {"role": "user", "content": user},
     ]
 
@@ -455,17 +467,11 @@ def _json_bool(value: object) -> bool | None:
     return None
 
 
-def parse_checklist_json_with_rationale(
-    raw: str, labels: list[str], aliases: dict[str, str] | None = None
-) -> tuple[dict[str, int], str, bool, bool]:
-    """Defensively parse a checklist object plus optional rationale."""
-    aliases = aliases or {}
-    preds = {label: 0 for label in labels}
-    label_set = set(labels)
-
+def _extract_json_object(raw: str) -> dict | None:
+    """Extract the first JSON object from a model reply."""
     text = (raw or "").strip()
     if not text:
-        return preds, "", False, False
+        return None
     if text.startswith("```"):
         text = text.strip("`")
         if text.lower().startswith("json"):
@@ -473,40 +479,93 @@ def parse_checklist_json_with_rationale(
     start, end = text.find("{"), text.rfind("}")
     if start != -1 and end != -1 and end > start:
         text = text[start : end + 1]
-
     try:
         data = json.loads(text)
     except (ValueError, TypeError):
-        return preds, "", False, False
-    if not isinstance(data, dict):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _coerce_label_choices(value: object, labels: list[str], aliases: dict[str, str]) -> list[str]:
+    """Normalize the model's compact label field into canonical labels."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = re.split(r"\s*(?:,|;|\band\b)\s*", value.strip())
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        return []
+
+    label_set = set(labels)
+    chosen: list[str] = []
+    for item in items:
+        raw = str(item).strip().lower()
+        norm = raw.replace(" ", "_").replace("-", "_")
+        norm = aliases.get(raw, aliases.get(norm, norm))
+        if norm in {"", "none", "no_error", "no_errors", "grammatical"}:
+            continue
+        if norm in label_set and norm not in chosen:
+            chosen.append(norm)
+        if len(chosen) >= MAX_LABEL_CHOICE_LABELS:
+            break
+    return chosen
+
+
+def parse_label_choice_json_with_rationale(
+    raw: str, labels: list[str], aliases: dict[str, str] | None = None
+) -> tuple[dict[str, int], str, bool, bool]:
+    """Defensively parse a grammaticality + compact label-choice object."""
+    aliases = aliases or {}
+    preds = {label: 0 for label in labels}
+
+    data = _extract_json_object(raw)
+    if data is None:
         return preds, "", False, False
 
     is_ungrammatical = _json_bool(data.get("is_ungrammatical"))
-    for key, value in data.items():
-        norm = str(key).strip().lower().replace(" ", "_").replace("-", "_")
-        norm = aliases.get(norm, norm)
-        if norm in label_set:
-            truthy = value is True or str(value).strip().lower() in {"true", "1", "yes"}
-            preds[norm] = 1 if truthy else 0
     if is_ungrammatical is None:
-        is_ungrammatical = any(preds.values())
-    elif not is_ungrammatical:
-        preds = {label: 0 for label in labels}
-    return preds, _single_sentence(data.get("rationale", "")), bool(is_ungrammatical), True
+        is_grammatical = _json_bool(data.get("is_grammatical"))
+        if is_grammatical is not None:
+            is_ungrammatical = not is_grammatical
+
+    raw_labels = data.get("labels")
+    if raw_labels is None:
+        for alt_key in ("label", "category", "categories", "error_labels", "error_type"):
+            if alt_key in data:
+                raw_labels = data[alt_key]
+                break
+    chosen = _coerce_label_choices(raw_labels, labels, aliases)
+
+    if is_ungrammatical is None:
+        is_ungrammatical = bool(chosen)
+    had_label_choices = bool(chosen)
+    if not is_ungrammatical:
+        chosen = []
+    for label in chosen:
+        preds[label] = 1
+    ok = bool(is_ungrammatical) == bool(chosen) and (bool(is_ungrammatical) or not had_label_choices)
+    return preds, _single_sentence(data.get("rationale", "")), bool(is_ungrammatical), ok
 
 
-def parse_checklist_json(
+def parse_label_choice_json(
     raw: str, labels: list[str], aliases: dict[str, str] | None = None
 ) -> tuple[dict[str, int], bool]:
-    """Defensively parse a per-category boolean object.
+    """Defensively parse a compact label-choice object.
 
     Returns ``(preds, ok)`` where ``preds`` maps every label in ``labels`` to 0/1
     (defaulting to 0 for missing keys) and ``ok`` is False if nothing parseable was
-    found. Keys are normalized + alias-resolved so e.g. "progressive" maps onto
-    "present_progressive".
+    found or the grammaticality flag contradicts the labels field.
     """
-    preds, _rationale, _is_ungrammatical, ok = parse_checklist_json_with_rationale(raw, labels, aliases=aliases)
+    preds, _rationale, _is_ungrammatical, ok = parse_label_choice_json_with_rationale(raw, labels, aliases=aliases)
     return preds, ok
+
+
+# Backward-compatible names for older benchmark imports. Their semantics now follow
+# label-choice mode rather than the previous per-category checklist mode.
+build_checklist_messages = build_label_choice_messages
+parse_checklist_json_with_rationale = parse_label_choice_json_with_rationale
+parse_checklist_json = parse_label_choice_json
 
 
 # ---------------------------------------------------------------------------

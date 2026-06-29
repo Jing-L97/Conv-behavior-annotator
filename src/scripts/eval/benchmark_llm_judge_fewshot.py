@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """Benchmark the LLM-as-judge against human labels with balanced few-shot prompting.
 
-Protocol (Option C -- one structured call per utterance):
+Protocol (one structured call per utterance):
     - Load the human-annotated child utterances. By default only [CHI] rows that
       have labels are kept; with --include_unlabeled, empty-label rows are kept
       and treated as grammatical/no-error examples.
     - Sample a BALANCED few-shot pool: up to K demos per category (rare categories
-      first), each demo rendered as a full per-category true/false checklist. The
-      remaining utterances are the TEST set (no sentence is both demo and test).
+      first), each demo rendered as a compact grammaticality + label-choice JSON
+      object. The remaining utterances are the TEST set (no sentence is both demo
+      and test).
     - For each test utterance, send ONE fixed-prefix prompt (definitions + the same
-      few-shot block + the utterance last) and ask the judge to mark true/false for
-      every category. HuggingFace inference can batch these prompts for GPU
-      throughput on a cluster.
+      few-shot block + the utterance last) and ask the judge to first decide
+      whether the utterance is grammatical; if not, it chooses only the best one or
+      two labels. HuggingFace inference can batch these prompts for GPU throughput
+      on a cluster.
     - Score per-category precision / recall / F1 against the gold labels and write
       two artifacts: a per-row predictions CSV and a per-category stats CSV.
 
@@ -49,10 +51,10 @@ from pkg.rlhf.eval.error_type_classifier import (
 from pkg.rlhf.eval.llm_judge import (
     TAXONOMY,
     HFJudgeConfig,
-    build_checklist_messages,
+    build_label_choice_messages,
     call_judge_hf_batch,
     load_hf_judge,
-    parse_checklist_json_with_rationale,
+    parse_label_choice_json_with_rationale,
     render_fewshot_block,
 )
 
@@ -119,7 +121,7 @@ def sample_balanced_fewshot(label_lists, k=5, seed=1, n_multi_error=2, n_grammat
 
 
 # ----------------------------
-# One checklist judgment (with retries; reuses HF transport)
+# One compact label-choice judgment (with retries; reuses HF transport)
 # ----------------------------
 def _retry_config(config: HFJudgeConfig) -> HFJudgeConfig:
     if not config.retry_do_sample:
@@ -134,6 +136,19 @@ def _format_label_summary(label_list: list[str], is_ungrammatical: bool) -> str:
     return "unclassified_error" if is_ungrammatical else "grammatical"
 
 
+def _format_judge_label_summary(label_list: list[str], is_ungrammatical: bool, ok: bool) -> str:
+    """Return the one-column judge label summary used in the predictions CSV."""
+    if not ok:
+        return "parse_error"
+    return _format_label_summary(label_list, is_ungrammatical)
+
+
+def _prompt_label_summary(label_list: list[str]) -> str:
+    """Return the labels shown to the model in compact few-shot examples."""
+    choices = [lab for lab in ERROR_TYPE_LABELS if lab in set(label_list)][:2]
+    return ", ".join(choices) if choices else "grammatical"
+
+
 def _judge_batch(
     utterance_batch: list[str],
     definitions: dict[str, str],
@@ -144,7 +159,7 @@ def _judge_batch(
 ) -> list[tuple[dict[str, int], str, bool, str, bool]]:
     """Judge a batch and retry malformed outputs with sampled decoding."""
     messages_batch = [
-        build_checklist_messages(utterance, ERROR_TYPE_LABELS, definitions, fewshot_block)
+        build_label_choice_messages(utterance, ERROR_TYPE_LABELS, definitions, fewshot_block)
         for utterance in utterance_batch
     ]
     results = []
@@ -154,7 +169,7 @@ def _judge_batch(
         raw_batch = [f"{type(exc).__name__}: {exc}"] * len(messages_batch)
 
     for raw in raw_batch:
-        preds, rationale, is_ungrammatical, ok = parse_checklist_json_with_rationale(
+        preds, rationale, is_ungrammatical, ok = parse_label_choice_json_with_rationale(
             raw, ERROR_TYPE_LABELS, aliases=LABEL_ALIASES
         )
         results.append([preds, rationale, is_ungrammatical, raw, ok])
@@ -171,7 +186,7 @@ def _judge_batch(
         except Exception as exc:  # noqa: BLE001 - judge must be robust
             retry_raws = [f"{type(exc).__name__}: {exc}"] * len(retry_messages)
         for pos, raw in zip(bad_positions, retry_raws, strict=True):
-            preds, rationale, is_ungrammatical, ok = parse_checklist_json_with_rationale(
+            preds, rationale, is_ungrammatical, ok = parse_label_choice_json_with_rationale(
                 raw, ERROR_TYPE_LABELS, aliases=LABEL_ALIASES
             )
             results[pos] = [preds, rationale, is_ungrammatical, raw, ok]
@@ -213,7 +228,10 @@ def run(args):
 
     # Persist the demos used (transparency / reproducibility).
     pd.DataFrame(
-        {"utterance": [utterances[i] for i in fewshot_idx], "labels": [", ".join(label_lists[i]) for i in fewshot_idx]}
+        {
+            "utterance": [utterances[i] for i in fewshot_idx],
+            "labels": [_prompt_label_summary(label_lists[i]) for i in fewshot_idx],
+        }
     ).to_csv(os.path.join(args.output_dir, "fewshot_used.csv"), index=False)
 
     if args.limit:
@@ -276,9 +294,9 @@ def run(args):
             row["gold_is_ungrammatical"] = int(gold_is_ungrammatical)
             row["judge_is_ungrammatical"] = int(is_ungrammatical)
             row["gold_labels"] = _format_label_summary(label_lists[i], gold_is_ungrammatical)
-            for j, lab in enumerate(ERROR_TYPE_LABELS):
-                row[f"gold_{lab}"] = int(gold_matrix[i, j])
-                row[f"judge_{lab}"] = int(pred_vec[j])
+            row["judge_labels"] = _format_judge_label_summary(
+                multihot_to_labels(pred_vec), bool(is_ungrammatical), bool(ok)
+            )
             row["exact_match"] = int(gold_is_ungrammatical == is_ungrammatical and gold_set == pred_set)
             row["judge_ok"] = int(ok)
             row["judge_rationale"] = rationale
@@ -320,7 +338,7 @@ def run(args):
 
 
 def get_args():
-    p = argparse.ArgumentParser(description="Few-shot LLM-as-judge benchmark vs human labels (checklist mode).")
+    p = argparse.ArgumentParser(description="Few-shot LLM-as-judge benchmark vs human labels (label-choice mode).")
     p.add_argument("--data_dir", type=str, required=True)
     p.add_argument("--output_dir", type=str, default="runs/judge_fewshot")
     p.add_argument("--utt_column", type=str, default="transcript_clean")
